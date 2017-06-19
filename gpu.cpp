@@ -48,7 +48,7 @@ int main(int argc, char* argv[])
 
 		cv::VideoCapture cap(0);
 		
-		cv::Mat frame, currFrame, prevFrame, h_currDescriptors, h_prevDescriptors;
+		cv::Mat frame, currFrame, prevFrame, h_currDescriptors, h_prevDescriptors, image_gray;
 		std::vector<cv::KeyPoint> h_currKeypoints, h_prevKeypoints;
 
 		GpuMat d_frame, d_fgFrame, d_greyFrame, d_descriptors, d_keypoints;
@@ -65,8 +65,8 @@ int main(int argc, char* argv[])
 
 //		cv::resize(prevFrame, prevFrame, cv::Size(prevFrame.cols * 0.25, prevFrame.rows * 0.25), 0, 0, CV_INTER_LINEAR);
 
-        	cv::Mat lab_image;
-        	cv::cvtColor(prevFrame, lab_image, CV_BGR2Lab);
+   /*     	cv::Mat lab_image;
+       		cv::cvtColor(prevFrame, lab_image, CV_BGR2Lab);
 
         	std::vector<cv::Mat> lab_planes(3);
         	cv::split(lab_image, lab_planes);
@@ -81,8 +81,8 @@ int main(int argc, char* argv[])
 
         	cv::Mat image_clahe;
         	cv::cvtColor(lab_image, image_clahe, CV_Lab2BGR);
-
-		d_frame.upload(image_clahe);
+*/
+		d_frame.upload(prevFrame);
 //		cv::gpu::MOG2_GPU mog;
 //		mog(d_frame, d_fgFrame, 0.1f);
 
@@ -108,17 +108,20 @@ int main(int argc, char* argv[])
 //			cv::resize(currFrame, currFrame, cv::Size(currFrame.cols * 0.25, currFrame.rows * 0.25), 0, 0, CV_INTER_LINEAR);
 
 
-			cv::cvtColor(currFrame, lab_image, CV_BGR2Lab);
-                	cv::split(lab_image, lab_planes);
+			cv::cvtColor(currFrame, image_gray, CV_BGR2GRAY);
+ //               	cv::split(lab_image, lab_planes);
 
-                	clahe->apply(lab_planes[0], dst);
+ //               	clahe->apply(lab_planes[0], dst);
 
-                	dst.copyTo(lab_planes[0]);
-                	cv::merge(lab_planes, lab_image);
+ //               	dst.copyTo(lab_planes[0]);
+ //               	cv::merge(lab_planes, lab_image);
 
-                	cv::cvtColor(lab_image, image_clahe, CV_Lab2BGR);
-
-			d_frame.upload(image_clahe);
+ //               	cv::cvtColor(lab_image, image_clahe, CV_Lab2BGR);
+	
+			cv::blur(image_gray, image_gray, Size(3,3));
+			cv::Canny(image_gray, image_gray, 10, 30, 3);			
+			
+			d_frame.upload(image_gray);
 
 //			mog(d_frame, d_fgFrame, 0.01f);
 		
@@ -254,7 +257,7 @@ int main(int argc, char* argv[])
 		//	d_fgFrame.download(mask);
 //			cv::imshow("Mask", mask);
 			cv::imshow("Result", frame);
-			cv::imshow("Normalized", image_clahe);
+		//	cv::imshow("Lab", image_clahe);
 			char c = cv::waitKey(60);
 
 			if (c == 27) // Esc key

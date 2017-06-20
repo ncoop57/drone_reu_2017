@@ -14,40 +14,12 @@ using namespace std;
 using namespace cv;
 using namespace cv::cuda;
 
-typedef struct{
-
-	double roll;
-	double pitch;
-	double yaw;
-	double vert_speed;
-}Navigation;
-
-typedef struct{
-	bool A;
-	bool B;
-	bool C;
-	bool D;
-}obs_location;
-
-typedef struct{
-	int x_pos;
-	int y_pos;
-	int z_pos;
-}location;
-
-// Constant floats used within Obstacle_Avoidance
-const float Kph = 0.5;
-const float Kp0 = 0.5;
-
-Navigation Obstacle_Avoidance(obs_location img_loc, location uav_loc);
-
 int main(int argc, char* argv[])
 {
 
 	try
 	{
 
-//		cv::VideoCapture cap(0);
 
 		ARDrone ardrone;
 
@@ -80,7 +52,7 @@ int main(int argc, char* argv[])
 		for (;;)
 		{
 
-
+			std::cout << "Battery = " << ardrone.getBatteryPercentage() << "[%]\r" << std::flush;
 			currFrame = ardrone.getImage();
 
 			cv::cvtColor(currFrame, image_gray, CV_BGR2GRAY);
@@ -109,7 +81,6 @@ int main(int argc, char* argv[])
 			catch (const cv::Exception& ex)
 			{
 
-				;
 
 			}
 
@@ -169,7 +140,7 @@ int main(int argc, char* argv[])
 					cv::convexHull(currPoints, hull[1], false);
 				
 					double area = cv::contourArea(hull[1]) / cv::contourArea(hull[0]);
-					std::cout << "Area: " << area << std::endl;
+			//		std::cout << "Area: " << area << std::endl;
 					if (area > 0.8)
 					{ 
 						cv::drawContours(frame, hull, 0, cv::Scalar(255, 0, 0), 1, 8,
@@ -186,19 +157,44 @@ int main(int argc, char* argv[])
 										 cv::Scalar(200,200,0), 2, 8, 0);
 
 						// Check which quadrant(s) rectangle is in
-						obs_location rect_loc = {false, false, false, false};
+						//obs_location rect_loc = {false, false, false, false};
 
-						if(boundRect.br().x  >= frame.cols/2.0 && boundRect.br().y >= frame.rows/2.0)
-							rect_loc.A = true;
-						if(boundRect.br().x > frame.cols/2.0 && boundRect.tl().y < frame.cols/2.0)
-							rect_loc.B = true;
-						if(boundRect.tl().x <= frame.cols/2.0 && boundRect.br().y >= frame.rows/2.0)
-							rect_loc.C = true;
-						if(boundRect.tl().x < frame.cols/2.0 && boundRect.tl().y < frame.cols/2.0)
-							rect_loc.D = true;
+						cv::Point top_left(boundRect.tl().x, boundRect.tl().y);
+						cv::Point top_right(boundRect.tl().x + boundRect.width, boundRect.tl().y);
+						cv::Point bot_left(boundRect.tl().x, boundRect.tl().y + boundRect.height);
+						cv::Point bot_right(boundRect.tl().x + boundRect.width, boundRect.tl().y + boundRect.height);
 
-						location uav_loc = {0,0,0};
-						Navigation command  = Obstacle_Avoidance(rect_loc, uav_loc);
+						double vx = 1.0, vy = 0.0, vz = 0.0, vr = 0.0;
+						vy += top_left.x - frame.cols / 2.0;
+						vy += top_right.x - frame.cols / 2.0;
+
+						vz -= top_left.y - frame.rows / 2.0;
+						vz -= bot_left.y - frame.rows / 2.0;
+						cout << "Left/Right: " << vy << " Up/Down: " << vz << endl;
+
+						for (int i = 0; i < 5; i++)
+						{
+					char key = cv::waitKey(60);
+	
+							if (key == ' ') {
+                                				if (ardrone.onGround()) ardrone.takeoff();
+                               					else                    ardrone.landing();
+                        				}
+
+							ardrone.move3D(vx, vy, vz, vr);
+						
+						}
+						//if(boundRect.br().x  >= frame.cols/2.0 && boundRect.br().y >= frame.rows/2.0)
+						//	rect_loc.A = true;
+						//if(boundRect.br().x > frame.cols/2.0 && boundRect.tl().y < frame.cols/2.0)
+						//	rect_loc.B = true;
+						//if(boundRect.tl().x <= frame.cols/2.0 && boundRect.br().y >= frame.rows/2.0)
+						//	rect_loc.C = true;
+						//if(boundRect.tl().x < frame.cols/2.0 && boundRect.tl().y < frame.cols/2.0)
+						//	rect_loc.D = true;
+
+						//location uav_loc = {0,0,0};
+						//Navigation command  = Obstacle_Avoidance(rect_loc, uav_loc);
 					}
 					
 					if(area > 2)
@@ -261,60 +257,6 @@ int main(int argc, char* argv[])
 	}
 
 	return 0;
-
 }
 
-Navigation Obstacle_Avoidance(obs_location img_loc, location uav_loc){
 
-	Navigation command ={0,0,0,0};
-
-	// Series of if conditions: starting from single quadrant and 
-	// ending at all quadrants being occupied
-	if(img_loc.A == true)
-		std::cout << "A";
-	if(img_loc.B == true)
-		std::cout << "B";
-	if(img_loc.C == true)
-		std::cout << "C";
-	if(img_loc.D == true)
-		std::cout << "D";
-
-	std::cout << std::endl;
-	
-	if((img_loc.D == false || img_loc.C == false) && 
-			(img_loc.A = true || img_loc.B == true || (img_loc.A == true && img_loc.B == true)))
-		std::cout << "Move: LEFT" << std::endl;	
-
-	else if((img_loc.A == false || img_loc.B == false) &&
-			 (img_loc.C = true || img_loc.D == true || (img_loc.C == true && img_loc.D == true)))
-		std::cout << "Move: RIGHT" << std::endl;
-
-	if((img_loc.B == false || img_loc.D == false) && 
-			img_loc.A == true || img_loc.C == true || (img_loc.A == true && img_loc.C == true))
-		std::cout << "Move: UP" << std::endl;
-
-	else if((img_loc.A == false || img_loc.C == false) &&
-			img_loc.B == true || img_loc.D == true || (img_loc.B == true && img_loc.D == true))
-		std::cout << "Move: DOWN" << std::endl;
-
-/*	else if(img_loc.A == true && img_loc.B == true && img_loc.C == true)
-		std::cout << "Move: UPPER-LEFT" << std::endl;
-
-	else if(img_loc.A = true && img_loc.B == true && img_loc.D == true)
-		std::cout << "Move: LOWER-LEFT" << std::endl;
-
-	else if(img_loc.A = true && img_loc.C == true && img_loc.D == true)
-		std::cout << "Move: UPPER-RIGHT" << std::endl;
-
-	else if(img_loc.B = true && img_loc.C == true && img_loc.D == true)
-		std::cout << "Move: LOWER-RIGHT" << std::endl;
-*/
-	 if(img_loc.A = true && img_loc.B == true && img_loc.C == true && img_loc.D == true)
-		//	Navigation next_Way_Point = Receive next waypoint	
-		if(0 >= uav_loc.y_pos)
-			std::cout << "Move: LEFT -> ABCD" << std::endl;
-		else
-			std::cout << "Move: RIGHT -> ABCD" << std::endl;
-
-	return command;
-}

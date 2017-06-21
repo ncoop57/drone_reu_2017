@@ -113,7 +113,7 @@ int main(int argc, char* argv[])
 
 			std::vector<cv::DMatch> good_matches;
 		
-			cout << "KeyPts: " << h_currKeypoints.size() << endl;			
+//			cout << "KeyPts: " << h_currKeypoints.size() << endl;			
 
 			for (int i = 0; i < h_prevDescriptors.rows; i++)
 			{
@@ -139,7 +139,7 @@ int main(int argc, char* argv[])
 				{				
 					std::vector<cv::Point> prevPoints;
 					std::vector<cv::Point> currPoints;
-					std::vector<std::vector<cv::Point> > hull(2);
+					//std::vector<std::vector<cv::Point> > hull(2);
 
 					std::vector<node> prev_quick;  					
 					std::vector<node> curr_quick;
@@ -147,19 +147,20 @@ int main(int argc, char* argv[])
 					for (unsigned int i = 0; i < good_matches.size(); i++)
 					{
 
-						prevPoints.push_back(h_currKeypoints[good_matches[i].queryIdx].pt);
+						prevPoints.push_back(h_prevKeypoints[good_matches[i].queryIdx].pt);
 						currPoints.push_back(h_currKeypoints[good_matches[i].trainIdx].pt);
 						
-						node prev_node = {false, h_currKeypoints[good_matches[i].queryIdx].pt, -1};		
+						node prev_node = {false, h_prevKeypoints[good_matches[i].queryIdx].pt, -1};		
 						node curr_node = {false, h_currKeypoints[good_matches[i].trainIdx].pt, -1};						
 						prev_quick.push_back(prev_node);
 						curr_quick.push_back(curr_node);
 					}
 
-
+					cout << "Initialized Nodes" << endl;
 					//-------------- Clustering Section ---------------
 
-					std::vector<std::vector<cv::Point > > group_pts;
+					std::vector<std::vector<cv::Point > > prev_group_pts;
+					std::vector<std::vector<cv::Point> > curr_group_pts;
 					std::vector<node> queue;
 					int threshold = 55;
 
@@ -170,51 +171,145 @@ int main(int argc, char* argv[])
 						if(curr_quick[i].is_grouped)
 							continue;
 
-						std::vector<cv::Point > cluster;	
-						cluster.push_back(curr_quick[i].Pt);					
+						std::vector<cv::Point> prev_cluster;
+						std::vector<cv::Point > curr_cluster;	
+						prev_cluster.push_back(prev_quick[i].Pt);
+						curr_cluster.push_back(curr_quick[i].Pt);					
 						curr_quick[i].is_grouped = true;						
-						curr_quick[i].ID = group_pts.size();
+						curr_quick[i].ID = curr_group_pts.size();
 
 
 						queue.push_back(curr_quick[i]);
 
-						while(queue.size() != 0)
+						while(!queue.empty())
 						{
+
+							cout << " Q Size: " << queue.size() << endl;
 
 							node work_node = queue.back();
 							queue.pop_back();
 
 							for (unsigned int j = 0; j < good_matches.size(); j++)
 							{
-								if(work_node.Pt == curr_quick[j].Pt)
+								if(work_node.Pt == curr_quick[j].Pt ||
+								   curr_quick[j].is_grouped == true )
 									continue;
 
 								double dist = norm(work_node.Pt - curr_quick[j].Pt);
 								if(dist < threshold)
 								{
 									curr_quick[j].is_grouped = true;
-									cluster.push_back(curr_quick[j].Pt);
+									curr_quick[j].ID = curr_group_pts.size();
+									prev_cluster.push_back(prev_quick[j].Pt);
+									curr_cluster.push_back(curr_quick[j].Pt);
 									queue.push_back(curr_quick[j]);
 								}
 
 							}
+			//				cout << "Added Node to cluster" << endl;
+
 
 						}
 
-						/*
+						prev_group_pts.push_back(prev_cluster);
+						curr_group_pts.push_back(curr_cluster);
+						cout << "Group Created: " << curr_group_pts.size() << endl;
 
-							UPDATE ID OF POINTS IN CLUSTER
-
-
-						*/
 					}
-					// --------------End of Clustering-----------------
+						
+					cout << "Group Created: " << curr_group_pts.size() << endl;
 
+					for(unsigned int i = 0; i < curr_group_pts.size(); i++)
+					{
+						cout << "Group # " << i << " , Count : " << curr_group_pts[i].size() << endl;
 
-					cv::convexHull(prevPoints, hull[0], false);
-					cv::convexHull(currPoints, hull[1], false);
+					}
+					
+					cout << " --------------------------------------- " << endl << endl;
 				
-					double area = cv::contourArea(hull[1]) / cv::contourArea(hull[0]);
+					// --------------End of Clustering----------------- 
+
+
+					/*
+
+
+						DRAW CLUSTERS
+
+
+					*/					
+
+
+					double vx = 0.0, vy = 0.0, vz = 0.0, vr = 0.0;
+					std::vector<std::vector<cv::Point> > prev_hull(prev_group_pts.size());
+					std::vector<std::vector<cv::Point> > curr_hull(curr_group_pts.size());
+					for (int i = 0; i < curr_group_pts.size(); i++)
+					{
+
+						cv::convexHull(prev_group_pts[i], prev_hull[i], false);
+						cv::convexHull(curr_group_pts[i], curr_hull[i], false);
+//						cv::drawContours(frame, hull, i, cv::Scalar(0, 0, 255), 1, 8, std::vector<cv::Vec4i>(), 0, cv::Point());
+						double prev_area = cv::contourArea(prev_hull[i]);
+						double curr_area = cv::contourArea(curr_hull[i]);
+						double ratio = curr_area / prev_area;
+				              	std::cout << "Prev Area: " << prev_area << " Curr Area: " << curr_area << " Ratio: " << ratio << std::endl;
+						if (ratio > 1.3)
+						{
+							cv::drawContours(frame, curr_hull, i, cv::Scalar(255, 0, 0), 1, 8,
+									std::vector<cv::Vec4i>(), 0, cv::Point());
+
+							// Used to approximate countours to polygons + get bounding rects
+							std::vector<cv::Point> contours_poly;
+							cv::Rect boundRect;
+
+						//      cv::approxPolyDP(cv::Mat(hull[1]), contours_poly, 3, true);
+							boundRect = cv::boundingRect(cv::Mat(curr_hull[i]));
+
+							cv::rectangle(frame, boundRect.tl(), boundRect.br(),
+											 cv::Scalar(200,200,0), 2, 8, 0);
+
+							// Check which quadrant(s) rectangle is in
+							//obs_location rect_loc = {false, false, false, false};
+
+							cv::Point top_left(boundRect.tl().x, boundRect.tl().y);
+							cv::Point top_right(boundRect.tl().x + boundRect.width, boundRect.tl().y);
+							cv::Point bot_left(boundRect.tl().x, boundRect.tl().y + boundRect.height);
+							cv::Point bot_right(boundRect.tl().x + boundRect.width, boundRect.tl().y + boundRect.height);
+
+							vr += min(1.0, 0.01 * (top_left.x - frame.cols / 2.0));
+							vr += max(-1.0, 0.01 * (top_right.x - frame.cols / 2.0));
+
+	//                                              vz -= min(1.0, 0.01 * (top_left.y - frame.rows / 2.0));
+	//                                              vz -= max(-1.0, 0.01 * (bot_left.y - frame.rows / 2.0));
+							cout << "Left/Right: " << vy << " Up/Down: " << vz << endl;
+
+						}
+
+					}
+
+
+					for (int i = 0; i < 10; i++)
+					{
+
+						char key = cv::waitKey(60);
+
+						if (key == ' ') {
+							if (ardrone.onGround()) ardrone.takeoff();
+							else                    ardrone.landing();
+						}
+
+						ardrone.move3D(vx, vy, vz, vr);
+
+					}
+					curr_group_pts.clear();
+					prev_group_pts.clear();
+
+
+					cout << "Draw the hulls" << endl;
+
+					//cv::convexHull(prevPoints, hull[0], false);
+					//cv::convexHull(currPoints, hull[1], false);
+				
+			/*		double area = cv::contourArea(hull[1]) / cv::contourArea(hull[0]);
 			//		std::cout << "Area: " << area << std::endl;
 					if (area > 1)
 					{ 
@@ -272,9 +367,9 @@ int main(int argc, char* argv[])
 						//location uav_loc = {0,0,0};
 						//Navigation command  = Obstacle_Avoidance(rect_loc, uav_loc);
 					}
-					
-					if(area > 2)
-						std::cout << "HALT" << std::endl;
+					*/
+//					if(area > 2)
+//						std::cout << "HALT" << std::endl;
 				}
 
 			}
@@ -293,8 +388,9 @@ int main(int argc, char* argv[])
 				break;
 
 			currFrame.copyTo(prevFrame);
+			h_prevKeypoints.clear();
 			h_prevKeypoints = h_currKeypoints;
-			h_currKeypoints.empty();
+			h_currKeypoints.clear();
 			h_currDescriptors.copyTo(h_prevDescriptors);
 
 			// Take off / Landing 

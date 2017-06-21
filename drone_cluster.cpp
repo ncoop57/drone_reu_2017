@@ -15,6 +15,14 @@ using namespace std;
 using namespace cv;
 using namespace cv::cuda;
 
+// Struct used in clustering section
+typedef struct{
+	bool is_grouped;
+	cv::Point Pt;
+	int ID;
+}node;
+
+
 int main(int argc, char* argv[])
 {
 
@@ -114,7 +122,7 @@ int main(int argc, char* argv[])
 				int curr = matches[i].trainIdx;
 
 				double ratio = h_currKeypoints[curr].size / h_prevKeypoints[prev].size;
-				if (matches[i].distance < 4*min_dist && ratio > 2)
+				if (matches[i].distance < 4*min_dist && ratio > 1)
 				{
 
 					good_matches.push_back(matches[i]);
@@ -133,13 +141,75 @@ int main(int argc, char* argv[])
 					std::vector<cv::Point> currPoints;
 					std::vector<std::vector<cv::Point> > hull(2);
 
-					for (int i = 0; i < good_matches.size(); i++)
+					std::vector<node> prev_quick;  					
+					std::vector<node> curr_quick;
+
+					for (unsigned int i = 0; i < good_matches.size(); i++)
 					{
 
 						prevPoints.push_back(h_currKeypoints[good_matches[i].queryIdx].pt);
 						currPoints.push_back(h_currKeypoints[good_matches[i].trainIdx].pt);
-
+						
+						node prev_node = {false, h_currKeypoints[good_matches[i].queryIdx].pt, -1};		
+						node curr_node = {false, h_currKeypoints[good_matches[i].trainIdx].pt, -1};						
+						prev_quick.push_back(prev_node);
+						curr_quick.push_back(curr_node);
 					}
+
+
+					//-------------- Clustering Section ---------------
+
+					std::vector<std::vector<cv::Point > > group_pts;
+					std::vector<node> queue;
+					int threshold = 55;
+
+					for(unsigned int i = 0; i < good_matches.size(); i++)
+					{
+
+					
+						if(curr_quick[i].is_grouped)
+							continue;
+
+						std::vector<cv::Point > cluster;	
+						cluster.push_back(curr_quick[i].Pt);					
+						curr_quick[i].is_grouped = true;						
+						curr_quick[i].ID = group_pts.size();
+
+
+						queue.push_back(curr_quick[i]);
+
+						while(queue.size() != 0)
+						{
+
+							node work_node = queue.back();
+							queue.pop_back();
+
+							for (unsigned int j = 0; j < good_matches.size(); j++)
+							{
+								if(work_node.Pt == curr_quick[j].Pt)
+									continue;
+
+								double dist = norm(work_node.Pt - curr_quick[j].Pt);
+								if(dist < threshold)
+								{
+									curr_quick[j].is_grouped = true;
+									cluster.push_back(curr_quick[j].Pt);
+									queue.push_back(curr_quick[j]);
+								}
+
+							}
+
+						}
+
+						/*
+
+							UPDATE ID OF POINTS IN CLUSTER
+
+
+						*/
+					}
+					// --------------End of Clustering-----------------
+
 
 					cv::convexHull(prevPoints, hull[0], false);
 					cv::convexHull(currPoints, hull[1], false);

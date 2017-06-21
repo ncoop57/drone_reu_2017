@@ -19,7 +19,7 @@ OBJS          = ardrone/ardrone.o \
                 ardrone/navdata.o \
                 ardrone/version.o \
                 ardrone/video.o   \
-                drone_gpu.o
+                drone_cluster.o
 PROGRAM       = test
 
 $(PROGRAM):     $(OBJS)

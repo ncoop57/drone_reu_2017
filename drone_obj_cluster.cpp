@@ -38,6 +38,8 @@ typedef struct{
 
 thread_data thread_data_array[NUM_THREADS];
 
+void getFeatures(Mat, Mat&, vector<KeyPoint>&);
+
 // Pthread function to issue avoidance command
 void *move(void *threadarg)
 {
@@ -53,7 +55,6 @@ void *move(void *threadarg)
 		ardrone.move3D(0.0, 0.0, 0.0, 1.0);
 	pthread_exit(NULL);
 }
-
 
 int main(int argc, char* argv[])
 {
@@ -95,12 +96,13 @@ int main(int argc, char* argv[])
 
 			std::cout << "Battery = " << ardrone.getBatteryPercentage() << "[%]\r" << std::flush;
 			currFrame = ardrone.getImage();
-			d_frame.upload(currFrame);
+			getFeatures(currFrame, h_currDescriptors, h_currKeypoints);
+			/*d_frame.upload(currFrame);
 			cv::cuda::cvtColor(d_frame, d_greyFrame, CV_RGB2GRAY);
 
 			detector(d_greyFrame, GpuMat(), d_keypoints, d_descriptors);
 			detector.downloadKeypoints(d_keypoints, h_currKeypoints);
-			d_descriptors.download(h_currDescriptors);
+			d_descriptors.download(h_currDescriptors);*/
 
 			h_prevDescriptors.convertTo(h_prevDescriptors, CV_32F);
 			h_currDescriptors.convertTo(h_currDescriptors, CV_32F);
@@ -391,20 +393,6 @@ int main(int argc, char* argv[])
 				}
 				else ardrone.landing();			
 			}
-/*
-		        // Move
-		        double vx = 0.0, vy = 0.0, vz = 0.0, vr = 0.0;
-        		if (key == 'w' || key == CV_VK_UP)    vx =  0.5;
-	        	if (key == 's' || key == CV_VK_DOWN)  vx = -0.5;
-        		if (key == 'q' || key == CV_VK_LEFT)  vr =  0.5;
-			 	if (key == 'e' || key == CV_VK_RIGHT) vr = -0.5;
-       		if (key == 'a') vy =  1.0;
-       		if (key == 'd') vy = -1.0;
-        		if (key == 'u') vz =  1.0;
-        		if (key == 'j') vz = -1.0;
-        		ardrone.move3D(vx, vy, vz, vr);
-*/
-        		// Change camera
         		static int mode = 0;
         		if (key == 'c') ardrone.setCamera(++mode % 4);
 
@@ -426,4 +414,17 @@ int main(int argc, char* argv[])
 	return 0;
 }
 
+void getFeatures(Mat frame, Mat& descriptors, vector<KeyPoint>& keys)
+{
 
+	SURF_CUDA detector(400);
+	GpuMat d_frame, d_keypoints, d_descriptors;
+
+	d_frame.upload(frame);
+	cuda::cvtColor(d_frame, d_frame, CV_RGB2GRAY);
+
+	detector(d_frame, GpuMat(), d_keypoints, d_descriptors);
+	detector.downloadKeypoints(d_keypoints, keys);
+	d_descriptors.download(descriptors);
+
+}

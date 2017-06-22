@@ -4,7 +4,7 @@
 #sudo apt-get install libopencv-dev
 
 CXX           = g++
-CXXFLAGS      = -O2 -Wall -D__STDC_CONSTANT_MACROS `pkg-config --libs --cflags opencv`
+CXXFLAGS      = -O2 -Wall -fopenmp -D__STDC_CONSTANT_MACROS `pkg-config --libs --cflags opencv`
 LIBS          = -lm                     \
                 -lpthread               \
                 -lavutil                \
@@ -19,7 +19,7 @@ OBJS          = ardrone/ardrone.o \
                 ardrone/navdata.o \
                 ardrone/version.o \
                 ardrone/video.o   \
-                drone_cluster.o
+                drone_obj_segment.o
 PROGRAM       = test
 
 $(PROGRAM):     $(OBJS)

@@ -80,20 +80,18 @@ typedef struct{
 }thread_data;
 
 thread_data thread_data_array[NUM_THREADS];
-
+/* Helper functions for object detection. */
 void getFeatures(SURF_CUDA, Mat, Mat&, vector<KeyPoint>&);
 void getMatches(Mat, Mat, vector<KeyPoint>, vector<KeyPoint>, BFMatcher, vector<DMatch>&);
 void filter(vector<DMatch>, vector<DMatch>&, vector<KeyPoint>, vector<KeyPoint>);
 void getGroups(vector<vector<Point> >&, vector<vector<Point> >&, vector<Point>&, vector<Point>&, vector<KeyPoint>, vector<KeyPoint>, vector<DMatch>);
-
-/* Helper function for object detection. */
 void getSegmentation(Ptr<cv::ximgproc::segmentation::GraphSegmentation>, Mat, Mat, Mat&, Mat&);
 
 /* Helper function for object avoidance. */
 void getMovement(Mat&, Mat, Mat, vector<Point>, vector<Point> , double&, double&, double&, double&);
 
 /* Pthread function for object avoidance. */
-/* This Pthread function recieves the x, y, z, and rotation parameters of UAV 
+/* This Pthread function recieves the x, y, z, and rotation parameters of UAV
  * and moves the UAV accordingly, for 5 iterations.
  * @param threadarg struct used to pass x, y, z, and rotation  parameters by value
 */
@@ -523,7 +521,7 @@ void getGroups(vector<vector<Point> >& prevGroups, vector<vector<Point> >& currG
 
 }
 
-/* This function is used to perform graph-cut segmentation on two consecutive frames, 
+/* This function is used to perform graph-cut segmentation on two consecutive frames,
  * the output of which is stored in the address of two Mat variables.
  *
  * @param seg Segmentation function used to segment prevFrame and currFrame.
@@ -538,7 +536,7 @@ void getSegmentation(Ptr<cv::ximgproc::segmentation::GraphSegmentation> seg, Mat
 
 	Mat prev_input, prev_output, curr_input, curr_output;
 
-	// Segmentation of previos frame 
+	// Segmentation of previos frame
 	seg->processImage(prevFrame, prev_output);
 
 	double mins, maxs;
@@ -595,15 +593,15 @@ void getSegmentation(Ptr<cv::ximgproc::segmentation::GraphSegmentation> seg, Mat
 
 }
 
-/* This function is used to determine the movement of the UAV given two  consecutive 
- * segmented images and the midpoints of feature clusters in the original images. 
+/* This function is used to determine the movement of the UAV given two  consecutive
+ * segmented images and the midpoints of feature clusters in the original images.
  * The area of expansion is calculated of detected obstacle in segmented frames.
  *
- * @param frame Mat variable of current frame of the video and used to determine 
- * dimensions of image and rectangle around detected object is drawn on it. 
- * @param prev_output_image Mat variable of previous segmented frame. Flood 
+ * @param frame Mat variable of current frame of the video and used to determine
+ * dimensions of image and rectangle around detected object is drawn on it.
+ * @param prev_output_image Mat variable of previous segmented frame. Flood
  * fill is seeded from prev_midpoints and area of obstacle is calculated.
- * @param curr_output_image Mat variable of current segmented frame. Flood 
+ * @param curr_output_image Mat variable of current segmented frame. Flood
  * fill is seeded from curr_midpoints and area of obstacle is calculated.
  * @param prev_midpoints Vector containing midpoints of feature clusters in previous frame.
  * @param curr_midpoints Vector containing midpoints of feature clusters in current frame.

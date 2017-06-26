@@ -85,10 +85,18 @@ void getFeatures(SURF_CUDA, Mat, Mat&, vector<KeyPoint>&);
 void getMatches(Mat, Mat, vector<KeyPoint>, vector<KeyPoint>, BFMatcher, vector<DMatch>&);
 void filter(vector<DMatch>, vector<DMatch>&, vector<KeyPoint>, vector<KeyPoint>);
 void getGroups(vector<vector<Point> >&, vector<vector<Point> >&, vector<Point>&, vector<Point>&, vector<KeyPoint>, vector<KeyPoint>, vector<DMatch>);
+
+/* Helper function for object detection. */
 void getSegmentation(Ptr<cv::ximgproc::segmentation::GraphSegmentation>, Mat, Mat, Mat&, Mat&);
+
+/* Helper function for object avoidance. */
 void getMovement(Mat&, Mat, Mat, vector<Point>, vector<Point> , double&, double&, double&, double&);
 
-// Pthread function to issue avoidance command
+/* Pthread function for object avoidance. */
+/* This Pthread function recieves the x, y, z, and rotation parameters of UAV 
+ * and moves the UAV accordingly, for 5 iterations.
+ * @param threadarg struct used to pass x, y, z, and rotation  parameters by value
+*/
 void *move(void *threadarg)
 {
    thread_data *my_data;
@@ -468,12 +476,23 @@ void getGroups(vector<vector<Point> >& prevGroups, vector<vector<Point> >& currG
 
 }
 
+/* This function is used to perform graph-cut segmentation on two consecutive frames, 
+ * the output of which is stored in the address of two Mat variables.
+ *
+ * @param seg Segmentation function used to segment prevFrame and currFrame.
+ * @param prevFrame Mat variable holding previous frame of video.
+ * @param currFrame Mat variable holding current frame of video.
+ * @param prev_output_image Mat variable holding result of segmentation on prevFrame.
+ * @param curr_outpout_image Mat variable holding result of segmentation on currFrame.
+*/
+
 void getSegmentation(Ptr<cv::ximgproc::segmentation::GraphSegmentation> seg, Mat prevFrame, Mat currFrame, Mat& prev_output_image, Mat& curr_output_image)
 {
 
 	Mat prev_input, prev_output, curr_input, curr_output;
-	seg->processImage(prevFrame, prev_output);
 
+	// Segmentation of previos frame 
+	seg->processImage(prevFrame, prev_output);
 
 	double mins, maxs;
 	minMaxLoc(prev_output, &mins, &maxs);
@@ -500,7 +519,7 @@ void getSegmentation(Ptr<cv::ximgproc::segmentation::GraphSegmentation> seg, Mat
 		}
 	}
 
-
+	// Segmentation of current frame
 	seg->processImage(currFrame, curr_output);
 
 	minMaxLoc(curr_output, &mins, &maxs);
@@ -529,6 +548,23 @@ void getSegmentation(Ptr<cv::ximgproc::segmentation::GraphSegmentation> seg, Mat
 
 }
 
+/* This function is used to determine the movement of the UAV given two  consecutive 
+ * segmented images and the midpoints of feature clusters in the original images. 
+ * The area of expansion is calculated of detected obstacle in segmented frames.
+ *
+ * @param frame Mat variable of current frame of the video and used to determine 
+ * dimensions of image and rectangle around detected object is drawn on it. 
+ * @param prev_output_image Mat variable of previous segmented frame. Flood 
+ * fill is seeded from prev_midpoints and area of obstacle is calculated.
+ * @param curr_output_image Mat variable of current segmented frame. Flood 
+ * fill is seeded from curr_midpoints and area of obstacle is calculated.
+ * @param prev_midpoints Vector containing midpoints of feature clusters in previous frame.
+ * @param curr_midpoints Vector containing midpoints of feature clusters in current frame.
+ * @param vx Address of double used to return x-direction of UAV.
+ * @param vy Address of double used to return y-direction of UAV.
+ * @param vz Address of double used to return z-direction of UAV.
+ * @param vr Address of double used to return rotation of UAV.
+*/
 void getMovement(Mat& frame, Mat prev_output_image, Mat curr_output_image, vector<Point> prev_midpoints, vector<Point> curr_midpoints, double& vx, double& vy, double& vz, double& vr)
 {
 	FLAG = 0;
@@ -539,12 +575,13 @@ void getMovement(Mat& frame, Mat prev_output_image, Mat curr_output_image, vecto
 		int prev_fill = 0, curr_fill = 0;
 		Rect boundRect;
 
-
 		prev_fill = floodFill(prev_output_image, prev_midpoints[i], cv::Scalar(250, 250, 250));
 		curr_fill = floodFill(curr_output_image, curr_midpoints[i], cv::Scalar(250, 250, 250), &boundRect);
 		cv::circle(frame, curr_midpoints[i], 10, cv::Scalar(250, 50, 0), 3);
 
+		// Calculate area of expansion of detected objects
 		double ratio = (double)curr_fill / prev_fill;
+
 		if (ratio > 1.3 && ratio < 2)
 		{
 			FLAG = 1;

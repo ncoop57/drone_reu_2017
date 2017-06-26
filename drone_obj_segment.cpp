@@ -18,7 +18,6 @@
 #include <sstream>
 #include <time.h>
 #include <fstream>
-//#include <omp.h>
 
 using namespace std;
 using namespace cv;
@@ -81,6 +80,7 @@ typedef struct{
 }thread_data;
 
 thread_data thread_data_array[NUM_THREADS];
+
 void getFeatures(SURF_CUDA, Mat, Mat&, vector<KeyPoint>&);
 void getMatches(Mat, Mat, vector<KeyPoint>, vector<KeyPoint>, BFMatcher, vector<DMatch>&);
 void filter(vector<DMatch>, vector<DMatch>&, vector<KeyPoint>, vector<KeyPoint>);
@@ -104,7 +104,7 @@ void *move(void *threadarg)
 
 	if (!(vx > 0.1 || vy > 0.1 || vz > 0.1))
 	{
-		
+
 
 		for(int i = 0; i < 5; i++)
 			ardrone.move3D(0.1, -my_data->vyt, -my_data->vzt, -my_data->vrt);
@@ -131,7 +131,7 @@ int main(int argc, char* argv[])
 
 		/* Open file for input */
 		ofstream pic_file;
-		pic_file.open("./flight_data/flight_metric.txt");		 
+		pic_file.open("./flight_data/flight_metric.txt");
 		pic_file << " Test data\n";
 
 		cv::Mat frame, currFrame, origFrame, prevFrame, h_currDescriptors, h_prevDescriptors, image_gray;
@@ -170,14 +170,14 @@ int main(int argc, char* argv[])
 			try
 			{
 				if (good_matches.size() > 2)
-				{	
+				{
 
 					vector<vector<Point> > prev_group_pts;
 					vector<vector<Point> > curr_group_pts;
 					vector<Point> prev_midpoints;
 					vector<Point> curr_midpoints;
 					getGroups(prev_group_pts, curr_group_pts, prev_midpoints, curr_midpoints, h_prevKeypoints, h_currKeypoints, good_matches);
-			
+
 
 					// -------------Begining of Segmentation ----------
 
@@ -223,13 +223,13 @@ int main(int argc, char* argv[])
 						thread_data_array[t].vzt = vz;
 						thread_data_array[t].vrt = vr;
 
-						rc = 	pthread_create(&threads[t], NULL, move, 
-								(void *) &thread_data_array[t]); 
+						rc = 	pthread_create(&threads[t], NULL, move,
+								(void *) &thread_data_array[t]);
 						if(rc){
 							cout << "Error creating thread" << endl;
 							exit(-1);
 						}
-					} 
+					}
 
 
 
@@ -262,7 +262,7 @@ int main(int argc, char* argv[])
 			h_currKeypoints.clear();
 			h_currDescriptors.copyTo(h_prevDescriptors);
 
-			// Take off / Landing 
+			// Take off / Landing
 			if (key == ' ')
 			{
 				if (ardrone.onGround())
@@ -273,7 +273,7 @@ int main(int argc, char* argv[])
 					sleep(10);
 					cout << "End" << endl;
 				}
-				else ardrone.landing();			
+				else ardrone.landing();
 			}
 
         		// Change camera
@@ -293,11 +293,17 @@ int main(int argc, char* argv[])
 		std::cout << "Error: " << ex.what() << std::endl;
 
 	}
-	
-//	pthread_exit(NULL);
+
 	return 0;
 }
 
+/**
+* Generates key points and descriptors of features in a given frame
+* @param detector the GPU SURF wrapper for detecting features in frame
+* @param frame the frame features will be extracted from
+* @param descriptors matrix of the different characteristics of features
+* @param keys the keypoints in the frame matching to features
+*/
 void getFeatures(SURF_CUDA detector, Mat frame, Mat& descriptors, vector<KeyPoint>& keys)
 {
 
@@ -312,32 +318,52 @@ void getFeatures(SURF_CUDA detector, Mat frame, Mat& descriptors, vector<KeyPoin
 
 }
 
+/**
+* Matches keypoints from the previous frame to the current frame
+* @param prevDescriptors the descriptor matrix for the previous frame's key features
+* @param currDescriptors the descriptor matrix for the current frame's key features
+* @param prevKeys the keypoints of the previous frame
+* @param currKeys the keypoints of the current frame
+* @param matcher the wrapper for the type of matcher used for matching the previous and current features
+* @param good_matches the container for the matches
+*/
 void getMatches(Mat prevDescriptors, Mat currDescriptors, vector<KeyPoint> prevKeys, vector<KeyPoint> currKeys,
 BFMatcher matcher, vector<DMatch>& good_matches)
 {
 
+    /* Convert the descriptors' encoding to the matchers format */
 	prevDescriptors.convertTo(prevDescriptors, CV_32F);
 	currDescriptors.convertTo(currDescriptors, CV_32F);
+
 
 	vector<DMatch> matches;
 	try
 	{
 
-	   matcher.match(prevDescriptors, currDescriptors, matches);
+        /* Perform the matching and store in temp variable */
+        matcher.match(prevDescriptors, currDescriptors, matches);
 
 	}
 	catch (const cv::Exception& ex) {}
 
+    /* Filter out bad matches */
 	filter(matches, good_matches, prevKeys, currKeys);
 
 }
 
+/**
+* Removes bad matches
+* @param matches the matches to be filtered
+* @param good_matches the container for the filtered out matches
+* @param prevKeys the keypoints of the previous frame
+* @param currKeys the keypoints of the current frame
+*/
 void filter(vector<DMatch> matches, vector<DMatch>& good_matches, vector<KeyPoint> prevKeys, vector<KeyPoint> currKeys)
 {
 
+    /* Thresholds for how much features are allowed to move between frames */
 	double max_dist = 0;
 	double min_dist = 100;
-
 
 	for (int i = 0; i < matches.size(); i++)
 	{
@@ -355,9 +381,11 @@ void filter(vector<DMatch> matches, vector<DMatch>& good_matches, vector<KeyPoin
 	for (int i = 0; i < matches.size(); i++)
 	{
 
+        /* Grab index of the keypoints in the previous and current frame */
 		int prev = matches[i].queryIdx;
 		int curr = matches[i].trainIdx;
 
+        /* Determine if the size of features is expanding between frames */
 		double ratio = currKeys[curr].size / prevKeys[prev].size;
 		if (matches[i].distance < 4*min_dist && ratio > 1.2)
 			good_matches.push_back(matches[i]);
@@ -366,17 +394,28 @@ void filter(vector<DMatch> matches, vector<DMatch>& good_matches, vector<KeyPoin
 
 }
 
+/**
+* Groups features into clusters
+* @param prevGroups the container for the previous frame's groups of clustered features
+* @param currGroups the container for the current frame's groups of clustered features
+* @param prev_midpoints the container for the center of the clusters in the previous frame
+* @param curr_midpoints the container for the center of the clusters in the current frame
+* @param h_prevKeypoints the keypoints of the previous frame
+* @param h_currKeypoints the keypoints of the current frame
+* @param good_matches the matches of features between the previous and current frames
+*/
 void getGroups(vector<vector<Point> >& prevGroups, vector<vector<Point> >& currGroups, vector<Point>& prev_midpoints, vector<Point>& curr_midpoints, vector<KeyPoint> h_prevKeypoints, vector<KeyPoint> h_currKeypoints, vector<DMatch> good_matches)
 {
 
 	vector<node> prev_quick;
 	vector<node> curr_quick;
 
+    /* Grab and store the good matches' keypoints from both frames */
 	for (unsigned int i = 0; i < good_matches.size(); i++)
 	{
 
-		node prev_node = {false, h_prevKeypoints[good_matches[i].queryIdx].pt, -1};           
-		node curr_node = {false, h_currKeypoints[good_matches[i].trainIdx].pt, -1};           
+		node prev_node = {false, h_prevKeypoints[good_matches[i].queryIdx].pt, -1};
+		node curr_node = {false, h_currKeypoints[good_matches[i].trainIdx].pt, -1};
 		prev_quick.push_back(prev_node);
 		curr_quick.push_back(curr_node);
 
@@ -385,23 +424,31 @@ void getGroups(vector<vector<Point> >& prevGroups, vector<vector<Point> >& currG
 	//-------------- Clustering Section ---------------
 
 	std::vector<node> queue;
+    /* Threshold for how close features must be in order to be clustered */
 	int threshold = 55;
 
 	for(unsigned int i = 0; i < good_matches.size(); i++)
 	{
 
 
+        /* If the keypoint is already grouped skip over it */
 		if(curr_quick[i].is_grouped)
 			continue;
 
+        /* Set up containers for the previous and current clusters */
 		std::vector<cv::Point> prev_cluster;
 		std::vector<cv::Point > curr_cluster;
+
+        /* Add the new keypoints to their respective cluster */
 		prev_cluster.push_back(prev_quick[i].Pt);
 		curr_cluster.push_back(curr_quick[i].Pt);
+
+        /* Add it to the group */
 		curr_quick[i].is_grouped = true;
 		curr_quick[i].ID = currGroups.size();
 
 
+        /* Add the new keypoint to the queue */
 		queue.push_back(curr_quick[i]);
 
 		while(!queue.empty())
@@ -410,6 +457,7 @@ void getGroups(vector<vector<Point> >& prevGroups, vector<vector<Point> >& currG
 			node work_node = queue.back();
 			queue.pop_back();
 
+            /* Look through the rest of the keypoints and add any meeting the threshold to the same group */
 			for (unsigned int j = 0; j < good_matches.size(); j++)
 			{
 				if(work_node.Pt == curr_quick[j].Pt ||
@@ -427,12 +475,10 @@ void getGroups(vector<vector<Point> >& prevGroups, vector<vector<Point> >& currG
 				}
 
 			}
-//                              cout << "Added Node to cluster" << endl;
-
 
 		}
 
-		// Compute midpoints
+		/* Compute midpoint for the cluster */
 		double cx = 0, cy = 0, px = 0, py = 0;
 		for(unsigned int p = 0; p < curr_cluster.size(); p++)
 		{
@@ -453,6 +499,7 @@ void getGroups(vector<vector<Point> >& prevGroups, vector<vector<Point> >& currG
 		Point c_mid(cx, cy);
 		Point p_mid(px, py);
 
+        /* Add the cluster and midpoint to their respective containers */
 		if (curr_cluster.size() > 2)
 		{
 

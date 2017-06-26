@@ -1,0 +1,41 @@
+ Test data
+./flight_data/Obj_530.jpg
+ 	 Left/Right: -3.3 Up/Down: 0
+./flight_data/Obj_5323.jpg
+ 	 Left/Right: -2.43 Up/Down: 0
+./flight_data/Obj_5324.jpg
+ 	 Left/Right: -3.3 Up/Down: 0
+./flight_data/Obj_5325.jpg
+ 	 Left/Right: -3.23 Up/Down: 0
+./flight_data/Obj_5325.jpg
+ 	 Left/Right: -2.87 Up/Down: 0
+./flight_data/Obj_5329.jpg
+ 	 Left/Right: -2.83 Up/Down: 0
+./flight_data/Obj_5330.jpg
+ 	 Left/Right: -3.17 Up/Down: 0
+./flight_data/Obj_5330.jpg
+ 	 Left/Right: -2.77 Up/Down: 0
+./flight_data/Obj_5332.jpg
+ 	 Left/Right: -3.3 Up/Down: 0
+./flight_data/Obj_5336.jpg
+ 	 Left/Right: -3.13 Up/Down: 0
+./flight_data/Obj_5339.jpg
+ 	 Left/Right: -2.95 Up/Down: 0
+./flight_data/Obj_5339.jpg
+ 	 Left/Right: -2.67 Up/Down: 0
+./flight_data/Obj_5348.jpg
+ 	 Left/Right: -3.3 Up/Down: 0
+./flight_data/Obj_5350.jpg
+ 	 Left/Right: -3.3 Up/Down: 0
+./flight_data/Obj_5351.jpg
+ 	 Left/Right: -2.19 Up/Down: 0
+./flight_data/Obj_542.jpg
+ 	 Left/Right: -3.3 Up/Down: 0
+./flight_data/Obj_547.jpg
+ 	 Left/Right: -2.55 Up/Down: 0
+./flight_data/Obj_5415.jpg
+ 	 Left/Right: -2.63 Up/Down: 0
+./flight_data/Obj_5415.jpg
+ 	 Left/Right: -3.3 Up/Down: 0
+./flight_data/Obj_5420.jpg
+ 	 Left/Right: -2.62 Up/Down: 0

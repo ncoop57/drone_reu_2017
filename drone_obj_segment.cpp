@@ -14,6 +14,10 @@
 #include "opencv2/imgcodecs.hpp"
 #include "ardrone/ardrone.h"
 #include <pthread.h>
+#include <string>
+#include <sstream>
+#include <time.h>
+#include <fstream>
 //#include <omp.h>
 
 using namespace std;
@@ -90,14 +94,29 @@ void *move(void *threadarg)
    thread_data *my_data;
 
 	my_data = (thread_data *) threadarg;
-	double vx = my_data->vxt;
-	double vy = my_data->vyt;
-	double vz = my_data->vzt;
-	double vr = my_data->vrt;
 
-	for(int i = 0; i < 3; i++)
-		ardrone.move3D(0.1, vy, vz, vr);
+
+	double vx;
+	double vy;
+	double vz;
+
+	ardrone.getVelocity(&vx, &vy, &vz);
+
+	if (!(vx > 0.1 || vy > 0.1 || vz > 0.1))
+	{
+		
+
+		for(int i = 0; i < 5; i++)
+			ardrone.move3D(0.1, -my_data->vyt, -my_data->vzt, -my_data->vrt);
+
+		for(int i = 0; i < 5; i++)
+			ardrone.move3D(0.1, my_data->vyt, my_data->vzt, my_data->vrt);
+
+	}
+
+	ardrone.move3D(0.0, 0.0, 0.0, 0.0);
 	pthread_exit(NULL);
+
 }
 
 
@@ -107,12 +126,14 @@ int main(int argc, char* argv[])
 	try
 	{
 
-
-//		ARDrone ardrone;
-
 		if (!ardrone.open())
 			return -1;
-		
+
+		/* Open file for input */
+		ofstream pic_file;
+		pic_file.open("./flight_data/flight_metric.txt");		 
+		pic_file << " Test data\n";
+
 		cv::Mat frame, currFrame, origFrame, prevFrame, h_currDescriptors, h_prevDescriptors, image_gray;
 		std::vector<cv::KeyPoint> h_currKeypoints, h_prevKeypoints;
 
@@ -173,48 +194,20 @@ int main(int argc, char* argv[])
 					getMovement(frame, prev_output_image, curr_output_image, prev_midpoints, curr_midpoints, vx, vy, vz, vr);
 
 
-/*					std::vector<std::vector<cv::Point> > prev_hull(prev_group_pts.size());
-					std::vector<std::vector<cv::Point> > curr_hull(curr_group_pts.size());
-					for (unsigned int i = 0; i < curr_group_pts.size(); i++)
+					if(FLAG)
 					{
+						/* Write pic and directions to file*/
 
-						int prev_fill = 0, curr_fill = 0;
-						Rect boundRect;
-						
+						string path = "./flight_data/Obj_";
+						time_t ti = time(0);
+						struct tm * now = localtime(&ti);
+						std::ostringstream oss;
+						oss << path << now->tm_min  << now->tm_sec << ".jpg";
 
-						prev_fill = floodFill(prev_output_image, prev_midpoints[i], cv::Scalar(250, 250, 250));
-						curr_fill = floodFill(curr_output_image, curr_midpoints[i], cv::Scalar(250, 250, 250), &boundRect);
-						cv::circle(frame, curr_midpoints[i], 10, cv::Scalar(250, 50, 0), 3);
-
-						double ratio = (double)curr_fill / prev_fill;
-				      std::cout << "Prev Area: " << prev_fill << " Curr Area: " << curr_fill << " Ratio: " << ratio << std::endl;
-						if (ratio > 1.2 && ratio < 2)
-						{
-
-							// Used to approximate countours to polygons + get bounding rects
-
-							cv::rectangle(frame, boundRect.tl(), boundRect.br(),
-											 cv::Scalar(200,200,0), 2, 8, 0);
-
-							// Check which quadrant(s) rectangle is in
-							cv::Point top_left(boundRect.tl().x, boundRect.tl().y);
-							cv::Point top_right(boundRect.tl().x + boundRect.width, boundRect.tl().y);
-							cv::Point bot_left(boundRect.tl().x, boundRect.tl().y + boundRect.height);
-							cv::Point bot_right(boundRect.tl().x + boundRect.width, boundRect.tl().y + boundRect.height);
-
-							vy += min(0.1, 0.01 * (top_left.x - frame.cols / 2.0));
-							vy += max(-0.1, 0.01 * (top_right.x - frame.cols / 2.0));
-
-	//                                              vz -= min(1.0, 0.01 * (top_left.y - frame.rows / 2.0));
-	//                                              vz -= max(-1.0, 0.01 * (bot_left.y - frame.rows / 2.0));
-							cout << "Left/Right: " << vy << " Up/Down: " << vz << endl;
-
-						}
-
+						pic_file << oss.str() << "\n \t Left/Right: " << vy << " Up/Down: " << vz << endl << endl;
+						imwrite(oss.str(), frame);
 					}
 
-			
-*/					
 			/* ------------------PTHREAD SECTION ----------------------*/
 
 
@@ -241,23 +234,8 @@ int main(int argc, char* argv[])
 
 
 
-/*
-					for (int i = 0; i < 10; i++)
-					{
 
-						char key = cv::waitKey(1);
-
-						if (key == ' ') {
-							if (ardrone.onGround()) ardrone.takeoff();
-							else                    ardrone.landing();
-						}
-
-		
-					ardrone.move3D(vx, vy, vz, vr);
-
-					}
-
-*/			/*------------------END OF PTHREAD-------------------------*/
+			/*------------------END OF PTHREAD-------------------------*/
 					curr_group_pts.clear();
 					prev_group_pts.clear();
 
@@ -305,7 +283,7 @@ int main(int argc, char* argv[])
 
 		}
 
-
+		pic_file.close();
 		ardrone.close();
 
 	}
@@ -381,7 +359,7 @@ void filter(vector<DMatch> matches, vector<DMatch>& good_matches, vector<KeyPoin
 		int curr = matches[i].trainIdx;
 
 		double ratio = currKeys[curr].size / prevKeys[prev].size;
-		if (matches[i].distance < 4*min_dist && ratio > 1.0)
+		if (matches[i].distance < 4*min_dist && ratio > 1.2)
 			good_matches.push_back(matches[i]);
 
 	}
@@ -553,6 +531,7 @@ void getSegmentation(Ptr<cv::ximgproc::segmentation::GraphSegmentation> seg, Mat
 
 void getMovement(Mat& frame, Mat prev_output_image, Mat curr_output_image, vector<Point> prev_midpoints, vector<Point> curr_midpoints, double& vx, double& vy, double& vz, double& vr)
 {
+	FLAG = 0;
 
 	for (unsigned int i = 0; i < curr_midpoints.size(); i++)
 	{
@@ -566,10 +545,9 @@ void getMovement(Mat& frame, Mat prev_output_image, Mat curr_output_image, vecto
 		cv::circle(frame, curr_midpoints[i], 10, cv::Scalar(250, 50, 0), 3);
 
 		double ratio = (double)curr_fill / prev_fill;
-//      std::cout << "Prev Area: " << prev_fill << " Curr Area: " << curr_fill << " Ratio: " << ratio << std::endl;
-		if (ratio > 1.2 && ratio < 2)
+		if (ratio > 1.3 && ratio < 2)
 		{
-
+			FLAG = 1;
 			// Used to approximate countours to polygons + get bounding rects
 
 			cv::rectangle(frame, boundRect.tl(), boundRect.br(),
@@ -584,8 +562,8 @@ void getMovement(Mat& frame, Mat prev_output_image, Mat curr_output_image, vecto
 			vy += min(0.1, 0.01 * (top_left.x - frame.cols / 2.0));
 			vy += max(-0.1, 0.01 * (top_right.x - frame.cols / 2.0));
 
-//                                              vz -= min(1.0, 0.01 * (top_left.y - frame.rows / 2.0));
-//                                              vz -= max(-1.0, 0.01 * (bot_left.y - frame.rows / 2.0));
+//                      vz -= min(1.0, 0.01 * (top_left.y - frame.rows / 2.0));
+//                      vz -= max(-1.0, 0.01 * (bot_left.y - frame.rows / 2.0));
 			cout << "Left/Right: " << vy << " Up/Down: " << vz << endl;
 
 		}

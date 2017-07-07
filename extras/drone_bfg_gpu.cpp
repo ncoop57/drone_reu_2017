@@ -1,3 +1,8 @@
+/*
+	Drone_gpu code with additional background detector implemented.
+	No feature extraction has been tested. Not promising.
+*/
+
 #include <iostream>
 #include <algorithm>
 #include <stdio.h>
@@ -18,6 +23,10 @@
 #include <sstream>
 #include <time.h>
 #include <fstream>
+#include <ctime>
+#include <math.h>
+#include <opencv2/cudabgsegm.hpp>
+
 
 using namespace std;
 using namespace cv;
@@ -27,8 +36,39 @@ using namespace cv::cuda;
 
 ARDrone ardrone;
 int FLAG = 0;
+struct timespec start, finish;
+double elapsed;
 
-/* Used for segmentation */
+/* Used for FPS */
+int CLOCK()
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC,  &t);
+    return (t.tv_sec * 1000)+(t.tv_nsec*1e-6);
+}
+
+/* Used for FPS */
+double _avgdur=0;
+int _fpsstart=0;
+double _avgfps=0;
+double _fps1sec=0;
+
+/* Used for FPS */
+double avgfps()
+{
+    if(CLOCK()-_fpsstart>1000)      
+    {
+        _fpsstart=CLOCK();
+        _avgfps=0.7*_avgfps+0.3*_fps1sec;
+        _fps1sec=0;
+    }
+
+    _fps1sec++;
+    return _avgfps;
+}
+
+
+/*Used for segmentation */
 Scalar hsv_to_rgb(Scalar c) {
     Mat in(1, 1, CV_32FC3);
     Mat out(1, 1, CV_32FC3);
@@ -62,8 +102,6 @@ Scalar color_mapping(int segment_id) {
 
 }
 
-
-
 // Struct used in clustering section
 typedef struct{
 	bool is_grouped;
@@ -80,11 +118,12 @@ typedef struct{
 }thread_data;
 
 thread_data thread_data_array[NUM_THREADS];
+
 /* Helper functions for object detection. */
 void getFeatures(SURF_CUDA, Mat, Mat&, vector<KeyPoint>&);
-void getMatches(Mat, Mat, vector<KeyPoint>, vector<KeyPoint>, BFMatcher, vector<DMatch>&);
+void getMatches(Mat, Mat, vector<KeyPoint>, vector<KeyPoint>, Ptr<cv::cuda::DescriptorMatcher>, vector<DMatch>&);
 void filter(vector<DMatch>, vector<DMatch>&, vector<KeyPoint>, vector<KeyPoint>);
-void getGroups(vector<vector<Point> >&, vector<vector<Point> >&, vector<Point>&, vector<Point>&, vector<KeyPoint>, vector<KeyPoint>, vector<DMatch>);
+void getGroups(Mat, vector<vector<Point> >&, vector<vector<Point> >&, vector<Point>&, vector<Point>&, vector<KeyPoint>, vector<KeyPoint>, vector<DMatch>);
 void getSegmentation(Ptr<cv::ximgproc::segmentation::GraphSegmentation>, Mat, Mat, Mat&, Mat&);
 
 /* Helper function for object avoidance. */
@@ -108,19 +147,9 @@ void *move(void *threadarg)
 
 	ardrone.getVelocity(&vx, &vy, &vz);
 
-	if (!(vx > 0.1 || vy > 0.1 || vz > 0.1))
-	{
+	for(int i = 0; i < 5; i++)
+		ardrone.move3D(0.1, my_data->vyt, my_data->vzt, my_data->vrt);
 
-
-		for(int i = 0; i < 5; i++)
-			ardrone.move3D(0.1, -my_data->vyt, -my_data->vzt, -my_data->vrt);
-
-		for(int i = 0; i < 5; i++)
-			ardrone.move3D(0.1, my_data->vyt, my_data->vzt, my_data->vrt);
-
-	}
-
-	ardrone.move3D(0.0, 0.0, 0.0, 0.0);
 	pthread_exit(NULL);
 
 }
@@ -128,6 +157,7 @@ void *move(void *threadarg)
 
 int main(int argc, char* argv[])
 {
+
 
 	try
 	{
@@ -139,25 +169,40 @@ int main(int argc, char* argv[])
 		ofstream pic_file;
 		pic_file.open("./flight_data/flight_metric.txt");
 		pic_file << " Test data\n";
+		
+		/* Used to store FPS and write to file */
+		double storage = 0;
 
 		cv::Mat frame, currFrame, origFrame, prevFrame, h_currDescriptors, h_prevDescriptors, image_gray;
 		std::vector<cv::KeyPoint> h_currKeypoints, h_prevKeypoints;
 
-		GpuMat d_frame, d_fgFrame, d_greyFrame, d_descriptors, d_keypoints;
+		GpuMat d_frame, d_fgFrame, d_greyFrame, prevDescriptors, currDescriptors, d_keypoints;
 		GpuMat d_threshold;
 
 		/* Segmentation variable */
-		Ptr<cv::ximgproc::segmentation::GraphSegmentation> seg = cv::ximgproc::segmentation::createGraphSegmentation(0.8, 300, 30);
-
+		Ptr<cv::ximgproc::segmentation::GraphSegmentation> seg = cv::ximgproc::segmentation::createGraphSegmentation(0.5, 500, 50);
 
 		SURF_CUDA detector(800);
-		cv::BFMatcher matcher;
-		//Ptr<cv::cuda::DescriptorMatcher> matcher = cv::cuda::DescriptorMatcher::createBFMatcher(detector.defaultNorm());
+		Ptr<cv::cuda::DescriptorMatcher> matcher = cv::cuda::DescriptorMatcher::createBFMatcher(detector.defaultNorm());
 
 		vector<cv::DMatch> matches, good_matches;
 
 		origFrame = ardrone.getImage();
 		cv::resize(origFrame, prevFrame, cv::Size(200,200));
+
+		/* Background Subtraction variable */
+		Ptr<BackgroundSubtractor> mog = cuda::createBackgroundSubtractorMOG();
+		GpuMat d_frame2, d_fgmask2, d_fgimg2;
+		Mat fgmask2, fgimg2;
+      d_frame2.upload(prevFrame);
+		mog->apply(d_frame2, d_fgmask2, 0.01);
+		
+
+
+		/* - - - - Preprocess Image - - - - */
+//		cv::blur(origFrame, origFrame, cv::Size(3,3));
+//		cv::boxFilter(origFrame, origFrame, -1, cv::Size(3,3));
+//		cv::medianBlur(origFrame, origFrame, 3);
 
 		getFeatures(detector, prevFrame, h_prevDescriptors, h_prevKeypoints);
 
@@ -166,39 +211,60 @@ int main(int argc, char* argv[])
 
 			std::cout << "Battery = " << ardrone.getBatteryPercentage() << "[%]\r" << std::flush;
 			origFrame = ardrone.getImage();
-			cv::resize(origFrame, currFrame, cv::Size(200,200));
+			cv::resize(origFrame, currFrame, 
+cv::Size(200,200));
 
+			d_frame2.upload(origFrame);
+			mog->apply(d_frame2, d_fgmask2, 0.95);		
+	
+			cv::imshow("Original", currFrame);
+		
+			/* - - - - Preprocess Image - - - - */
+/*			cv::Mat lab_image;
+			cv::cvtColor(currFrame, lab_image, CV_BGR2Lab);
+
+			std::vector<cv::Mat> lab_planes(3);
+			cv::split(lab_image, lab_planes);
+
+			cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE();
+			clahe->setClipLimit(4);
+			cv::Mat dst;
+			clahe->apply(lab_planes[0], dst);
+
+			dst.copyTo(lab_planes[0]);
+			cv::merge(lab_planes, lab_image);
+
+			cv::cvtColor(lab_image, currFrame, CV_Lab2BGR);
+*/
+
+//			cv::blur(origFrame, origFrame, cv::Size(3,3));
+//			cv::boxFilter(origFrame, origFrame, -1, cv::Size(3,3));
+//			cv::medianBlur(origFrame, origFrame, 3);
+
+			clock_gettime(CLOCK_MONOTONIC, &start);
 			getFeatures(detector, currFrame, h_currDescriptors, h_currKeypoints);
 
 			vector<DMatch> good_matches;
 			getMatches(h_prevDescriptors, h_currDescriptors, h_prevKeypoints, h_currKeypoints, matcher, good_matches);
-			origFrame.copyTo(frame);
+			currFrame.copyTo(frame);
 			try
 			{
 				if (good_matches.size() > 2)
 				{
-
-					vector<vector<Point> > prev_group_pts;
-					vector<vector<Point> > curr_group_pts;
-					vector<Point> prev_midpoints;
-					vector<Point> curr_midpoints;
-					getGroups(prev_group_pts, curr_group_pts, prev_midpoints, curr_midpoints, h_prevKeypoints, h_currKeypoints, good_matches);
-
-
-					// -------------Begining of Segmentation ----------
-
 
 					Mat prev_output_image, curr_output_image;
 
 					getSegmentation(seg, prevFrame, currFrame, prev_output_image, curr_output_image);
 					imshow("curr", curr_output_image);
 
-
-					// ------------End of segmentation ---------------
+					vector<vector<Point> > prev_group_pts;
+					vector<vector<Point> > curr_group_pts;
+					vector<Point> prev_midpoints;
+					vector<Point> curr_midpoints;
+					getGroups(curr_output_image, prev_group_pts, curr_group_pts, prev_midpoints, curr_midpoints, h_prevKeypoints, h_currKeypoints, good_matches);
 
 					double vx = 1.0, vy = 0.0, vz = 0.0, vr = 0.0;
 					getMovement(frame, prev_output_image, curr_output_image, prev_midpoints, curr_midpoints, vx, vy, vz, vr);
-
 
 					if(FLAG)
 					{
@@ -208,10 +274,14 @@ int main(int argc, char* argv[])
 						time_t ti = time(0);
 						struct tm * now = localtime(&ti);
 						std::ostringstream oss;
-						oss << path << now->tm_min  << now->tm_sec << ".jpg";
-
-						pic_file << oss.str() << "\n \t Left/Right: " << vy << " Up/Down: " << vz << endl << endl;
+						oss << path << "_" << now->tm_min << "_" << now->tm_sec << ".jpg\n";
 						imwrite(oss.str(), frame);
+	
+						oss << "Left/Right: " << vy << "\tUp/Down: " << vz << endl;
+						oss << "Time: " << elapsed << endl;
+						oss << "FPS: " << storage << endl;
+						pic_file << oss.str() << endl << endl;
+
 					}
 
 			/* ------------------PTHREAD SECTION ----------------------*/
@@ -255,6 +325,19 @@ int main(int argc, char* argv[])
 
 			}
 
+			/* Calculate individual FPS */
+			storage = avgfps();
+
+			/* Background Segmentation */
+			d_fgimg2.create(d_frame2.size(), d_frame2.type());
+			d_fgimg2.setTo(Scalar::all(0));
+       	d_frame2.copyTo(d_fgimg2, d_fgmask2);
+ 			d_fgmask2.download(fgmask2);
+        	d_fgimg2.download(fgimg2);
+ 			imshow("foreground mask", fgmask2);
+       	imshow("foreground image", fgimg2);
+
+			cv::imshow("Normalized", currFrame);
 
 			cv::imshow("Result", frame);
 			char key = cvWaitKey(1);
@@ -289,6 +372,8 @@ int main(int argc, char* argv[])
 
 		}
 
+		cout << "Average FPS: " << avgfps() << endl;
+
 		pic_file.close();
 		ardrone.close();
 
@@ -313,7 +398,7 @@ int main(int argc, char* argv[])
 void getFeatures(SURF_CUDA detector, Mat frame, Mat& descriptors, vector<KeyPoint>& keys)
 {
 
-        GpuMat d_frame, d_keypoints, d_descriptors;
+       	GpuMat d_frame, d_keypoints, d_descriptors;
 
         d_frame.upload(frame);
         cuda::cvtColor(d_frame, d_frame, CV_RGB2GRAY);
@@ -334,20 +419,19 @@ void getFeatures(SURF_CUDA detector, Mat frame, Mat& descriptors, vector<KeyPoin
 * @param good_matches the container for the matches
 */
 void getMatches(Mat prevDescriptors, Mat currDescriptors, vector<KeyPoint> prevKeys, vector<KeyPoint> currKeys,
-BFMatcher matcher, vector<DMatch>& good_matches)
+Ptr<cv::cuda::DescriptorMatcher> matcher, vector<DMatch>& good_matches)
 {
 
-    /* Convert the descriptors' encoding to the matchers format */
-	prevDescriptors.convertTo(prevDescriptors, CV_32F);
-	currDescriptors.convertTo(currDescriptors, CV_32F);
-
+	GpuMat d_prevDescriptors, d_currDescriptors;
+	d_prevDescriptors.upload(prevDescriptors);
+	d_currDescriptors.upload(currDescriptors);
 
 	vector<DMatch> matches;
 	try
 	{
 
-        /* Perform the matching and store in temp variable */
-        matcher.match(prevDescriptors, currDescriptors, matches);
+        	/* Perform the matching and store in temp variable */
+        	matcher->match(d_prevDescriptors, d_currDescriptors, matches);
 
 	}
 	catch (const cv::Exception& ex) {}
@@ -371,7 +455,7 @@ void filter(vector<DMatch> matches, vector<DMatch>& good_matches, vector<KeyPoin
 	double max_dist = 0;
 	double min_dist = 100;
 
-	for (int i = 0; i < matches.size(); i++)
+	for (unsigned int i = 0; i < matches.size(); i++)
 	{
 
 		double dist = matches[i].distance;
@@ -384,7 +468,7 @@ void filter(vector<DMatch> matches, vector<DMatch>& good_matches, vector<KeyPoin
 	}
 
 
-	for (int i = 0; i < matches.size(); i++)
+	for (unsigned int i = 0; i < matches.size(); i++)
 	{
 
         /* Grab index of the keypoints in the previous and current frame */
@@ -393,7 +477,7 @@ void filter(vector<DMatch> matches, vector<DMatch>& good_matches, vector<KeyPoin
 
         /* Determine if the size of features is expanding between frames */
 		double ratio = currKeys[curr].size / prevKeys[prev].size;
-		if (matches[i].distance < 4*min_dist && ratio > 1.2)
+		if (matches[i].distance < 3*min_dist  && ratio > 1 )
 			good_matches.push_back(matches[i]);
 
 	}
@@ -410,7 +494,7 @@ void filter(vector<DMatch> matches, vector<DMatch>& good_matches, vector<KeyPoin
 * @param h_currKeypoints the keypoints of the current frame
 * @param good_matches the matches of features between the previous and current frames
 */
-void getGroups(vector<vector<Point> >& prevGroups, vector<vector<Point> >& currGroups, vector<Point>& prev_midpoints, vector<Point>& curr_midpoints, vector<KeyPoint> h_prevKeypoints, vector<KeyPoint> h_currKeypoints, vector<DMatch> good_matches)
+void getGroups(Mat curr_output_image, vector<vector<Point> >& prevGroups, vector<vector<Point> >& currGroups, vector<Point>& prev_midpoints, vector<Point>& curr_midpoints, vector<KeyPoint> h_prevKeypoints, vector<KeyPoint> h_currKeypoints, vector<DMatch> good_matches)
 {
 
 	vector<node> prev_quick;
@@ -427,94 +511,70 @@ void getGroups(vector<vector<Point> >& prevGroups, vector<vector<Point> >& currG
 
 	}
 
-	//-------------- Clustering Section ---------------
+	/*-------------- Clustering Section ---------------*/
 
-	std::vector<node> queue;
-    /* Threshold for how close features must be in order to be clustered */
-	int threshold = 55;
+   /* Set up containers for the previous and current clusters */
+	std::vector<cv::Point> prev_cluster;
+	std::vector<cv::Point > curr_cluster;
 
+
+	/* Cluster points into groups by color */
 	for(unsigned int i = 0; i < good_matches.size(); i++)
 	{
 
+		int FLAG2 = 0;
 
-        /* If the keypoint is already grouped skip over it */
-		if(curr_quick[i].is_grouped)
-			continue;
-
-        /* Set up containers for the previous and current clusters */
-		std::vector<cv::Point> prev_cluster;
-		std::vector<cv::Point > curr_cluster;
-
-        /* Add the new keypoints to their respective cluster */
-		prev_cluster.push_back(prev_quick[i].Pt);
-		curr_cluster.push_back(curr_quick[i].Pt);
-
-        /* Add it to the group */
-		curr_quick[i].is_grouped = true;
-		curr_quick[i].ID = currGroups.size();
-
-
-        /* Add the new keypoint to the queue */
-		queue.push_back(curr_quick[i]);
-
-		while(!queue.empty())
+		for(unsigned int j = 0; j < currGroups.size(); j++)
 		{
-
-			node work_node = queue.back();
-			queue.pop_back();
-
-            /* Look through the rest of the keypoints and add any meeting the threshold to the same group */
-			for (unsigned int j = 0; j < good_matches.size(); j++)
+			if(curr_output_image.at<Vec3b>(h_currKeypoints[good_matches[i].trainIdx].pt) == 
+				curr_output_image.at<Vec3b>(currGroups[j][0]))
 			{
-				if(work_node.Pt == curr_quick[j].Pt ||
-				   curr_quick[j].is_grouped == true )
-					continue;
-
-				double dist = norm(work_node.Pt - curr_quick[j].Pt);
-				if(dist < threshold)
-				{
-					curr_quick[j].is_grouped = true;
-					curr_quick[j].ID = currGroups.size();
-					prev_cluster.push_back(prev_quick[j].Pt);
-					curr_cluster.push_back(curr_quick[j].Pt);
-					queue.push_back(curr_quick[j]);
-				}
-
+				currGroups[j].push_back(h_currKeypoints[good_matches[i].trainIdx].pt);
+				prevGroups[j].push_back(h_prevKeypoints[good_matches[i].queryIdx].pt);
+				FLAG2 = 1;
 			}
-
 		}
-
-		/* Compute midpoint for the cluster */
-		double cx = 0, cy = 0, px = 0, py = 0;
-		for(unsigned int p = 0; p < curr_cluster.size(); p++)
+		
+		if( currGroups.size() == 0 || FLAG2 == 0);
 		{
+			std::vector<cv::Point> prev_cluster;
+			std::vector<cv::Point > curr_cluster;
+			curr_cluster.push_back(h_currKeypoints[good_matches[i].trainIdx].pt);
+			prev_cluster.push_back(h_prevKeypoints[good_matches[i].queryIdx].pt);
+			prevGroups.push_back(prev_cluster);
+			currGroups.push_back(curr_cluster);
+		}
+			
 
-			cx += curr_cluster[p].x;
-			cy += curr_cluster[p].y;
+	}
 
-			px += prev_cluster[p].x;
-			py += prev_cluster[p].y;
+	/* Compute midpoint for the cluster */
+	for(unsigned int p = 0; p < currGroups.size(); p++)
+	{
+		double cx = 0, cy = 0, px = 0, py = 0;
 
+		for(unsigned int w = 0; w < currGroups[p].size(); w++)
+		{
+			cx += currGroups[p][w].x;
+			cy += currGroups[p][w].y;
+
+			px += prevGroups[p][w].x;
+			py += prevGroups[p][w].y;
 		}
 
-		cx /= curr_cluster.size();
-		cy /= curr_cluster.size();
-		px /= curr_cluster.size();
-		py /= curr_cluster.size();
+		cx /= currGroups[p].size();
+		cy /= currGroups[p].size();
+		px /= currGroups[p].size();
+		py /= currGroups[p].size();
 
 		Point c_mid(cx, cy);
 		Point p_mid(px, py);
 
-        /* Add the cluster and midpoint to their respective containers */
-		if (curr_cluster.size() > 2)
+		/* Add the cluster and midpoint to their respective containers */
+		if (currGroups[p].size() > 3)
 		{
-
 			curr_midpoints.push_back(c_mid);
 			prev_midpoints.push_back(p_mid);
-
-			prevGroups.push_back(prev_cluster);
-			currGroups.push_back(curr_cluster);
-
 		}
 
 	}
@@ -534,6 +594,31 @@ void getGroups(vector<vector<Point> >& prevGroups, vector<vector<Point> >& currG
 void getSegmentation(Ptr<cv::ximgproc::segmentation::GraphSegmentation> seg, Mat prevFrame, Mat currFrame, Mat& prev_output_image, Mat& curr_output_image)
 {
 
+	/* -------Begining of Line Section-------*/
+/*
+	Mat grey_prevFrame, grey_currFrame;
+
+	cv::cvtColor(prevFrame,grey_prevFrame,CV_BGR2GRAY);
+	cv::cvtColor(currFrame,grey_currFrame,CV_BGR2GRAY);
+
+	vector<Vec4i> prevlines;
+	HoughLinesP( grey_prevFrame, prevlines, 1, CV_PI/180, 80, 30, 10 );
+	for( size_t i = 0; i < prevlines.size(); i++ )
+	{
+	  line(prevFrame, Point(prevlines[i][0], prevlines[i][1]),
+		  Point(prevlines[i][2], prevlines[i][3]), Scalar(0,0,255), 3, 8);
+	}
+
+	vector<Vec4i> currlines;
+	HoughLinesP( grey_currFrame, currlines, 1, CV_PI/180, 80, 30, 10 );
+	for( size_t i = 0; i < currlines.size(); i++ )
+	{
+	  line(currFrame, Point(currlines[i][0], currlines[i][1]),
+		  Point(currlines[i][2], currlines[i][3]), Scalar(0,0,255), 3, 8);
+	}
+*/
+	/* ------------End of Line-------------*/
+
 	Mat prev_input, prev_output, curr_input, curr_output;
 
 	// Segmentation of previos frame
@@ -544,7 +629,7 @@ void getSegmentation(Ptr<cv::ximgproc::segmentation::GraphSegmentation> seg, Mat
 
 	int nb_segs = (int)maxs + 1;
 
-	std::cout << nb_segs << " segments" << std::endl;
+//	std::cout << nb_segs << " segments" << std::endl;
 
 	prev_output_image = Mat::zeros(prev_output.rows, prev_output.cols, CV_8UC3);
 
@@ -571,7 +656,7 @@ void getSegmentation(Ptr<cv::ximgproc::segmentation::GraphSegmentation> seg, Mat
 
 	nb_segs = (int)maxs + 1;
 
-	std::cout << nb_segs << " segments" << std::endl;
+//	std::cout << nb_segs << " segments" << std::endl;
 
 	curr_output_image = Mat::zeros(curr_output.rows, curr_output.cols, CV_8UC3);
 
@@ -619,6 +704,9 @@ void getMovement(Mat& frame, Mat prev_output_image, Mat curr_output_image, vecto
 
 		int prev_fill = 0, curr_fill = 0;
 		Rect boundRect;
+		clock_gettime(CLOCK_MONOTONIC, &finish);
+		elapsed = (finish.tv_sec - start.tv_sec);
+		elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
 
 		prev_fill = floodFill(prev_output_image, prev_midpoints[i], cv::Scalar(250, 250, 250));
 		curr_fill = floodFill(curr_output_image, curr_midpoints[i], cv::Scalar(250, 250, 250), &boundRect);
@@ -627,8 +715,11 @@ void getMovement(Mat& frame, Mat prev_output_image, Mat curr_output_image, vecto
 		// Calculate area of expansion of detected objects
 		double ratio = (double)curr_fill / prev_fill;
 
-		if (ratio > 1.3 && ratio < 2)
+		if (ratio > 1.2 && ratio < 2)
 		{
+
+//			cout << "Ratio: " << ratio << endl;
+
 			FLAG = 1;
 			// Used to approximate countours to polygons + get bounding rects
 
@@ -646,8 +737,22 @@ void getMovement(Mat& frame, Mat prev_output_image, Mat curr_output_image, vecto
 
 //                      vz -= min(1.0, 0.01 * (top_left.y - frame.rows / 2.0));
 //                      vz -= max(-1.0, 0.01 * (bot_left.y - frame.rows / 2.0));
-			cout << "Left/Right: " << vy << " Up/Down: " << vz << endl;
+//			cout << "Left/Right: " << vy << " Up/Down: " << vz << endl;
+/*
+	        	double vx;
+     			double vy;
+        		double vz;
+			double A = 1/ratio;
+			
+			ardrone.getVelocity(&vx, &vy, &vz);
+					
+			double dist = 0.1 * (0.001) / (1 - sqrt(A));
 
+			std::ostringstream distance;
+        		distance << "Distance: " <<  dist;
+
+			putText(frame, distance.str(), boundRect.tl(), FONT_HERSHEY_DUPLEX, 0.25, cv::Scalar(220,100,10), 1);
+			//cout << distance.str() << endl;*/
 		}
 
 	}

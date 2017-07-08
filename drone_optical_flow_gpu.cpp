@@ -4,6 +4,7 @@
 #include "opencv2/highgui.hpp"
 #include <opencv2/ximgproc.hpp>
 #include <opencv2/cudafeatures2d.hpp>
+#include <opencv2/cudaoptflow.hpp>
 #include <opencv2/cudaimgproc.hpp>
 #include <opencv2/core/cuda.hpp>
 #include "ardrone/ardrone.h"
@@ -114,8 +115,12 @@ void *move(void *threadarg)
 int main()
 {
 
+	bool flag = false;
+
 	if (!ardrone.open())
 			return -1;
+
+	VideoWriter writer;
 
 	/* Open file for numbering */
 	std::fstream numberfile("./flight_data/count.txt", std::ios_base::in);
@@ -128,9 +133,9 @@ int main()
 
 	/* Segmentation variable */
 	Ptr<cv::ximgproc::segmentation::GraphSegmentation> seg = cv::ximgproc::segmentation::createGraphSegmentation(0.5, 500, 50);
-	namedWindow("Original", 1);
+	/*namedWindow("Original", 1);
 	createTrackbar("Max Ratio", "Original", &MAX_RATIO, 50);
-	createTrackbar("Max Distance", "Original", &MAX_DIST, 100);
+	createTrackbar("Max Distance", "Original", &MAX_DIST, 100);*/
 
 	vector<Point2f> prev_points;
 	vector<Point2f> curr_points;
@@ -156,20 +161,9 @@ int main()
 
 		getPoints(prev_frame, curr_frame, prev_points, curr_points);
 
-		imshow("Original", original);
-		//imshow("Segmentation", segmentation);
-
-		curr_frame.copyTo(prev_frame);
-		prev_points.clear();
-		prev_points = curr_points;
-
-		char key = waitKey(30);
-		if (key == 27) // Esc key
-			break;
-
-		/*Mat segmentation;
+		Mat segmentation;
 		getSegmentation(seg, curr_frame, segmentation);
-
+		
 		vector<vector<Point2f> > prev_groups, curr_groups;
 		getGroups(original, segmentation, prev_groups, curr_groups, prev_points, curr_points);
 
@@ -197,13 +191,13 @@ int main()
 		}
 
 
-		/* Calculate individual FPS 
+		/* Calculate individual FPS */
 		storage = avgfps();
 
 		if (FLAG == 1)
 		{
 
-			/* Write pic and directions to file
+			/* Write pic and directions to file */
 			string path = "/Obj_";
 			time_t ti = time(0);
 			struct tm * now = localtime(&ti);
@@ -211,7 +205,7 @@ int main()
 			oss << fss.str() << path << "_" << now->tm_min << "_" << now->tm_sec << ".jpg";
 			imwrite(oss.str(), original);
 
-			/* Open file for input 
+			/* Open file for input  */
 			ofstream pic_file;
 			std::ostringstream pss;
 			pss << fss.str() << "/flight_metric.txt";
@@ -223,6 +217,13 @@ int main()
 			pss << "FPS: " << storage << endl;
 			pic_file << pss.str() << endl << endl;
 			FLAG = 0;
+
+		}
+
+		if (flag)
+		{
+			
+			writer << original;
 
 		}
 
@@ -254,6 +255,25 @@ int main()
 			}
 
 		}
+		else if (key == 'r')
+		{
+
+			if (!flag)
+			{
+
+				std::ostringstream filename;
+				filename << fss.str() << "/video.avi";
+				int fcc = CV_FOURCC('D', 'I', 'V', '3');
+				int fps = 30;
+				Size frameSize(original.cols, original.rows);
+			
+				writer.open(filename.str(), fcc, fps, frameSize);
+				flag = true;
+
+			}
+			else flag = false;
+
+		}
 
   		// Change camera
   		static int mode = 0;
@@ -269,7 +289,7 @@ int main()
 		if (key == 27) // Esc key
 			break;
 
-		frame_index++;*/
+		frame_index++;
 		
 	}
 
@@ -277,46 +297,43 @@ int main()
 
 	ardrone.close();
 
-	/*std::fstream computerfile("./flight_data/count.txt");
+	std::fstream computerfile("./flight_data/count.txt");
 	computerfile << number << std::flush;
 	computerfile.close();
 
-	cout << "Average FPS: " << avgfps() << endl;*/
+	cout << "Average FPS: " << avgfps() << endl;
 
 	return 0;
+
+}
+static void download(const GpuMat& d_mat, vector<Point2f>& vec)
+{
+
+	vec.resize(d_mat.cols);
+	Mat mat(1, d_mat.cols, CV_32FC2, (void*)& vec[0]);
+	d_mat.download(mat);
 
 }
 
 void getPoints(Mat prev_frame, Mat curr_frame, vector<Point2f>& prev_points, vector<Point2f>& curr_points)
 {
 
-	GpuMat d_prev_frame(prev_frame), d_curr_frame(curr_frame), d_prev_points(prev_points), d_curr_points(curr_points), d_corners;
+	GpuMat d_prev_frame(prev_frame), d_curr_frame(curr_frame), d_prev_points(prev_points), d_curr_points;
 
 
 	if (frame_index % 5 == 0)
 	{
 
-		Ptr<CornersDetector> detector = createGoodFeaturesToTrackDetector(CV_8UC1, MAX_COUNT, 0.01, 10);
-		detector->detect(d_prev_frame, d_curr_frame, d_corners);
-//		goodFeaturesToTrack(prev_frame, prev_points, MAX_COUNT, 0.01, 10, Mat(), 3, 0, 0.04);
+		Ptr<CornersDetector> detector = createGoodFeaturesToTrackDetector(d_prev_frame.type(), MAX_COUNT, 0.01, 10);
+		detector->detect(d_prev_frame, d_prev_points);
+		download(d_prev_points, prev_points);
 
 	}
 	
 	Ptr<cuda::SparsePyrLKOpticalFlow> lk = cuda::SparsePyrLKOpticalFlow::create();
 
-	lk->calc(loadMat(prev_frame), loadMat(curr_frame), d_prev_points, d_curr_points, GpuMat());
-
-	prev_points.resize(d_prev_points.cols);
-	Mat prev_mat_points(1, d_prev_points.cols, CV_32FC2, (void*) &prev_points[0]);
-	d_prev_points.download(prev_mat_points);
-
-	curr_points.resize(d_curr_frame.cols);
-	Mat curr_mat_points(1, d_curr_frame.cols, CV_32FC2, (void*) &curr_points[0]);
-	d_curr_frame.download(curr_mat_points);
-	
-	/*vector<uchar> status;
-   vector<float> err;
-	calcOpticalFlowPyrLK(prev_frame, curr_frame, prev_points, curr_points, status, err);*/
+	lk->calc(d_prev_frame, d_curr_frame, d_prev_points, d_curr_points, GpuMat());
+	download(d_curr_points, curr_points);
 
 }
 

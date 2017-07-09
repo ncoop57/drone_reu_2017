@@ -1,0 +1,6 @@
+ Test data
+./flight_data/Test_14/flight_metric.txtLeft/Right: -22	Up/Down: 0
+Time: 0.199701
+FPS: 6.02414
+
+

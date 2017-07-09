@@ -19,7 +19,6 @@ using namespace cv;
 using namespace std;
 using namespace cv::cuda;
 
-#define NUM_THREADS 1
 
 /* Helper functions used for obstacle detection */
 void getPoints(Mat, Mat, vector<Point2f>&, vector<Point2f>&);
@@ -39,16 +38,6 @@ int MIN_DIST = 10;
 int MAX_RATIO = 5;
 double MIN_RATIO = 1.2;
 std::ostringstream fss;
-
-// Struct used to pass arguments to Pthread
-typedef struct{
-	double vxt;
-	double vyt;
-	double vzt;
-	double vrt;
-}thread_data;
-
-thread_data thread_data_array[NUM_THREADS];
 
 /* Variables used for measuring FPS */
 struct timespec start, finish;
@@ -80,36 +69,6 @@ double avgfps()
 
     _fps1sec++;
     return _avgfps;
-}
-
-/* Pthread function for object avoidance. */
-/* This Pthread function recieves the x, y, z, and rotation parameters of UAV
- * and moves the UAV accordingly, for 5 iterations.
- * @param threadarg struct used to pass x, y, z, and rotation  parameters by value
-*/
-void *move(void *threadarg)
-{
-//   thread_data *my_data;
-
-//	my_data = (thread_data *) threadarg;
-
-
-
-	for(int i = 0; i < 5; i++)
-			ardrone.move3D(0.0, 0, 0, 0);
-/*
-	if (my_data->vyt != 0 || my_data->vzt != 0)
-	{
-		cout << "Stop-Turn..." << endl;
-		for(int i = 0; i < 5; i++)
-			ardrone.move3D(0, my_data->vyt, 0, 0);
-	}
-	else
-		for(int i = 0; i < 5; i++)
-			ardrone.move3D(0.1, 0, 0, 0);
-*/
-	pthread_exit(NULL);
-
 }
 
 int main()
@@ -170,58 +129,38 @@ int main()
 		double vx = 1.0, vy = 0.0, vz = 0.0, vr = 0.0;
 		getMovement(original, segmentation, prev_groups, curr_groups, vx, vy, vz, vr);
 
-		pthread_t threads[NUM_THREADS];
-		int rc;
-		long t;
-
-		for(t = 0; t < NUM_THREADS; t++)
-		{
-
-			thread_data_array[t].vxt = vx;
-			thread_data_array[t].vyt = vy;
-			thread_data_array[t].vzt = vz;
-			thread_data_array[t].vrt = vr;
-
-			rc = 	pthread_create(&threads[t], NULL, move,
-					(void *) &thread_data_array[t]);
-			if(rc){
-				cout << "Error creating thread" << endl;
-				exit(-1);
-			}
-		}
-
-
 		/* Calculate individual FPS */
 		storage = avgfps();
-
-		if (FLAG == 1)
-		{
-
-			/* Write pic and directions to file */
-			string path = "/Obj_";
-			time_t ti = time(0);
-			struct tm * now = localtime(&ti);
-			std::ostringstream oss;
-			oss << fss.str() << path << "_" << now->tm_min << "_" << now->tm_sec << ".jpg";
-			imwrite(oss.str(), original);
-
-			/* Open file for input  */
-			ofstream pic_file;
-			std::ostringstream pss;
-			pss << fss.str() << "/flight_metric.txt";
-			pic_file.open(pss.str().c_str());
-			pic_file << " Test data\n";
-
-			pss << "Left/Right: " << vy << "\tUp/Down: " << vz << endl;
-			pss << "Time: " << elapsed << endl;
-			pss << "FPS: " << storage << endl;
-			pic_file << pss.str() << endl << endl;
-			FLAG = 0;
-
-		}
-
 		if (flag)
 		{
+
+			if (FLAG == 1)
+			{
+
+				/* Write pic and directions to file */
+				string path = "/Obj_";
+				time_t ti = time(0);
+				struct tm * now = localtime(&ti);
+				std::ostringstream oss;
+				oss << fss.str() << path << "_" << now->tm_min << "_" << now->tm_sec << ".jpg";
+				imwrite(oss.str(), original);
+
+				/* Open file for input  */
+				ofstream pic_file;
+				std::ostringstream pss;
+				pss << fss.str() << "/flight_metric.txt";
+				pic_file.open(pss.str().c_str());
+				pic_file << " Test data\n";
+
+				pss << "Left/Right: " << vy << "\tUp/Down: " << vz << endl;
+				pss << "Time: " << elapsed << endl;
+				pss << "FPS: " << storage << endl;
+				pic_file << pss.str() << endl << endl;
+				FLAG = 0;
+
+			}
+
+		
 			
 			writer << original;
 
@@ -234,12 +173,24 @@ int main()
 		{
 			if (ardrone.onGround())
 			{
+
+				flag = true;
 				ardrone.takeoff();
+
 				
 				fss.str("");
 				fss.clear();
 				fss << "./flight_data/Test_" << number;
 				mkdir(fss.str().c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+
+				std::ostringstream filename;
+				filename << fss.str() << "/video.avi";
+				int fcc = CV_FOURCC('X', 'V', 'I', 'D');
+				int fps = avgfps();
+				Size frameSize(original.cols, original.rows);
+			
+				writer.open(filename.str(), fcc, fps, frameSize);
+				
 
 				cout << "Start" << endl;
 				// Wait(secs) to stabilize, before commands
@@ -250,28 +201,12 @@ int main()
 			}
 			else
 			{ 
+
+				flag = false;
 				ardrone.landing();
+				writer.release();
 				number++;
 			}
-
-		}
-		else if (key == 'r')
-		{
-
-			if (!flag)
-			{
-
-				std::ostringstream filename;
-				filename << fss.str() << "/video.avi";
-				int fcc = CV_FOURCC('D', 'I', 'V', '3');
-				int fps = 30;
-				Size frameSize(original.cols, original.rows);
-			
-				writer.open(filename.str(), fcc, fps, frameSize);
-				flag = true;
-
-			}
-			else flag = false;
 
 		}
 
@@ -290,6 +225,7 @@ int main()
 			break;
 
 		frame_index++;
+		ardrone.move3D(0.3, 0, 0, 0);
 		
 	}
 

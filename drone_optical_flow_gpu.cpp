@@ -38,6 +38,7 @@ int MIN_DIST = 10;
 int MAX_RATIO = 5;
 double MIN_RATIO = 1.2;
 std::ostringstream fss;
+cv::RNG rng(12345);
 
 /* Variables used for measuring FPS */
 struct timespec start, finish;
@@ -100,10 +101,13 @@ int main()
 	vector<Point2f> curr_points;
 
 	/* Read in image, resize image, and convert to Gray scale */
-	Mat original, prev_frame, curr_frame;
+	Mat original, roi, prev_frame, curr_frame, features;
 	original = ardrone.getImage();
 	cv::resize(original, original, Size(200, 200));
-	cv::cvtColor(original, prev_frame, CV_RGB2GRAY);
+	Rect rect((int) (original.rows / 2 - (original.rows * 0.67) / 2), (int) (original.cols / 2 - (original.cols * 0.67) / 2), (int) (original.rows * 0.67), (int) (original.cols * 0.67));
+	roi = original(rect);
+	cv::cvtColor(roi, prev_frame, CV_RGB2GRAY);
+	
 	
 
 	for (;;)
@@ -116,7 +120,9 @@ int main()
 		/* Read in image, resize image, and convert to Gray scale */
 		original = ardrone.getImage();
 		cv::resize(original, original, Size(200, 200));
-		cv::cvtColor(original, curr_frame, CV_RGB2GRAY);
+		Rect rect1((int) (original.rows / 2 - (original.rows * 0.67) / 2), (int) (original.cols / 2 - (original.cols * 0.67) / 2), (int) (original.rows * 0.67), (int) (original.cols * 0.67));
+		roi = original(rect1);
+		cv::cvtColor(roi, curr_frame, CV_RGB2GRAY);
 
 		getPoints(prev_frame, curr_frame, prev_points, curr_points);
 
@@ -124,10 +130,11 @@ int main()
 		getSegmentation(seg, curr_frame, segmentation);
 		
 		vector<vector<Point2f> > prev_groups, curr_groups;
-		getGroups(original, segmentation, prev_groups, curr_groups, prev_points, curr_points);
+		roi.copyTo(features);
+		getGroups(features, segmentation, prev_groups, curr_groups, prev_points, curr_points);
 
 		double vx = 1.0, vy = 0.0, vz = 0.0, vr = 0.0;
-		getMovement(original, segmentation, prev_groups, curr_groups, vx, vy, vz, vr);
+		getMovement(roi, segmentation, prev_groups, curr_groups, vx, vy, vz, vr);
 
 		/* Calculate individual FPS */
 		storage = avgfps();
@@ -143,7 +150,10 @@ int main()
 				struct tm * now = localtime(&ti);
 				std::ostringstream oss;
 				oss << fss.str() << path << "_" << now->tm_min << "_" << now->tm_sec << ".jpg";
-				imwrite(oss.str(), original);
+				imwrite(oss.str(), roi);
+				std::ostringstream segme;
+				segme << fss.str() << path << "_" << now->tm_min << "_" << now->tm_sec << "_" << "seg" << ".jpg";
+				imwrite(segme.str(), segmentation);
 
 				/* Open file for input  */
 				ofstream pic_file;
@@ -162,7 +172,7 @@ int main()
 
 		
 			
-			writer << original;
+			writer << roi;
 
 		}
 
@@ -187,7 +197,7 @@ int main()
 				filename << fss.str() << "/video.avi";
 				int fcc = CV_FOURCC('X', 'V', 'I', 'D');
 				int fps = avgfps();
-				Size frameSize(original.cols, original.rows);
+				Size frameSize(roi.cols, roi.rows);
 			
 				writer.open(filename.str(), fcc, fps, frameSize);
 				
@@ -212,10 +222,11 @@ int main()
 
   		// Change camera
   		static int mode = 0;
-  		if (key == 'c') ardrone.setCamera(++mode % 4);	
+  		if (key == 'c') ardrone.setCamera(++mode % 4);
 
-		imshow("Original", original);
-		//imshow("Segmentation", segmentation);
+		imshow("Original", roi);
+		imshow("Segment", segmentation);
+		imshow("Features", features);
 
 		curr_frame.copyTo(prev_frame);
 		prev_points.clear();
@@ -225,11 +236,19 @@ int main()
 			break;
 
 		frame_index++;
-		ardrone.move3D(0.3, 0, 0, 0);
+	
+		/* Drone Movement - move forward unless object detected */
+		if (vy != 0)
+		{
+			cout << "Stop-Turn..." << endl;
+			for(int i = 0; i < 5; i++)
+				ardrone.move3D(0, vy, 0, 0);
+		}
+		else
+			ardrone.move3D(0.3, 0, 0, 0);
+
 		
 	}
-
-	
 
 	ardrone.close();
 
@@ -398,24 +417,30 @@ void getGroups(Mat original, Mat curr_output_image, vector<vector<Point2f> >& pr
 void getMovement(Mat& frame, Mat segmentation, vector<vector<Point2f> > prev_groups, vector<vector<Point2f> > curr_groups, double& vx, double& vy, double& vz, double& vr)
 {
 
+
+
 	for (unsigned int i = 0; i < curr_groups.size(); i++)
 	{
 
+		vector<Point> temp_p_group, temp_c_group;
+		for (unsigned int j = 0; j < curr_groups[i].size(); j++)
+		{
 
+			temp_p_group.push_back(prev_groups[i][j]);
+			temp_c_group.push_back(curr_groups[i][j]);
+
+		}
 		
 		// Used to approximate countours to polygons + get bounding rects
-		std::vector<std::vector<cv::Point2f> > hull(2);
-		cv::convexHull(prev_groups[i], hull[0], false);
-		cv::convexHull(curr_groups[i], hull[1], false);
+		std::vector<std::vector<cv::Point> > hull(2);
+		cv::convexHull(temp_p_group, hull[0], false);
+		cv::convexHull(temp_c_group, hull[1], false);
 		cv::Rect boundRect;
 
 		double prev_area = cv::contourArea(hull[0]);
 		double curr_area = cv::contourArea(hull[1]); 
 
 		double ratio = curr_area / prev_area;
-
-		if (ratio > 1)
-//			cout << "Ratio: " << ratio << endl;
 
 		if (ratio > MIN_RATIO && ratio < MAX_RATIO)
 		{
@@ -430,7 +455,7 @@ void getMovement(Mat& frame, Mat segmentation, vector<vector<Point2f> > prev_gro
 				floodFill(segmentation, curr_groups[i][0], cv::Scalar(250, 250, 250), &boundRect);
 				int area = boundRect.width * boundRect.height;
 
-				if (area > 22500)
+				if (area > (double) (frame.rows * frame.cols) / 2)
 					continue;
 
 			}
@@ -440,10 +465,12 @@ void getMovement(Mat& frame, Mat segmentation, vector<vector<Point2f> > prev_gro
 				continue;
 
 			}
-
+	 		Scalar color = Scalar(rng.uniform(0, 255), rng.uniform(0, 255), rng.uniform(0, 255));
 			// Used to approximate countours to polygons + get bounding rect			
 			cv::rectangle(frame, boundRect.tl(), boundRect.br(),
-							 cv::Scalar(200,200,0), 2, 8, 0);
+							 color, 2, 8, 0);
+
+			drawContours(frame, hull, 0, color, 1, 8, vector<Vec4i>(), 0, Point());
 
 			// Check which quadrant(s) rectangle is in
 			cv::Point top_left(boundRect.tl().x, boundRect.tl().y);
@@ -456,7 +483,7 @@ void getMovement(Mat& frame, Mat segmentation, vector<vector<Point2f> > prev_gro
 			FLAG = 1;
 
 			
-		}/*/**/
+		}/**/
 
 	}
 

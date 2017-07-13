@@ -22,6 +22,7 @@ using namespace cv::cuda;
 
 /* Helper functions used for obstacle detection */
 void getPoints(Mat, Mat, vector<Point2f>&, vector<Point2f>&);
+void getTemplate(Mat, Mat, vector<Point2f>&, vector<Point2f>&, vector<Point2f>&, vector<Point2f>&);
 void getSegmentation(Ptr<cv::ximgproc::segmentation::GraphSegmentation>, Mat, Mat&);
 void getGroups(Mat, Mat, vector<vector<Point2f> >&, vector<vector<Point2f> >&, vector<Point2f>, vector<Point2f>);
 
@@ -99,6 +100,8 @@ int main()
 
 	vector<Point2f> prev_points;
 	vector<Point2f> curr_points;
+	vector<Point2f> prev_expand;
+	vector<Point2f> curr_expand;
 
 	/* Read in image, resize image, and convert to Gray scale */
 	Mat original, roi, prev_frame, curr_frame, features;
@@ -125,13 +128,14 @@ int main()
 		cv::cvtColor(roi, curr_frame, CV_RGB2GRAY);
 
 		getPoints(prev_frame, curr_frame, prev_points, curr_points);
-
+		getTemplate(prev_frame, curr_frame, prev_points, curr_points, prev_expand, curr_expand);
+		
 		Mat segmentation;
 		getSegmentation(seg, curr_frame, segmentation);
 		
 		vector<vector<Point2f> > prev_groups, curr_groups;
 		roi.copyTo(features);
-		getGroups(features, segmentation, prev_groups, curr_groups, prev_points, curr_points);
+		getGroups(features, segmentation, prev_groups, curr_groups, prev_expand, curr_expand);
 
 		double vx = 1.0, vy = 0.0, vz = 0.0, vr = 0.0;
 		getMovement(roi, segmentation, prev_groups, curr_groups, vx, vy, vz, vr);
@@ -153,10 +157,7 @@ int main()
 				imwrite(oss.str(), roi);
 				std::ostringstream segme;
 				segme << fss.str() << path << "_" << now->tm_min << "_" << now->tm_sec << "_" << "seg" << ".jpg";
-				imwrite(segme.str(), segmentation);
-				std::ostringstream feat;
-				feat << fss.str() << path << "_" << now->tm_min << "_" << now->tm_sec << "_" << "feat" << ".jpg";
-				imwrite(feat.str(), features);
+				imwrite(segme.str(), features);
 
 				/* Open file for input  */
 				ofstream pic_file;
@@ -188,12 +189,12 @@ int main()
 			{
 
 				flag = true;
-				//ardrone.takeoff();
+//				ardrone.takeoff();
 
 				
 				fss.str("");
 				fss.clear();
-				fss << "./flight_data/Experiment_" << number;
+				fss << "./flight_data/Temp_Experiment_" << number;
 				mkdir(fss.str().c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
 
 				std::ostringstream filename;
@@ -207,8 +208,8 @@ int main()
 
 				cout << "Start" << endl;
 				// Wait(secs) to stabilize, before commands
-				ardrone.move3D(0, 0, 0, 0);
-			//	sleep(10);
+				//ardrone.move3D(0, 0, 0, 0);
+				//sleep(10);
 
 
 			}
@@ -216,7 +217,7 @@ int main()
 			{ 
 
 				flag = false;
-				//ardrone.landing();
+//				ardrone.landing();
 				writer.release();
 				number++;
 				cout << "End" << endl;
@@ -236,13 +237,17 @@ int main()
 		prev_points.clear();
 		prev_points = curr_points;
 
+		prev_expand.clear();
+		curr_expand.clear();
+
+
 		if (key == 27) // Esc key
 			break;
 
 		frame_index++;
 	
 		/* Drone Movement - move forward unless object detected */
-		if (vy != 0)
+/*		if (vy != 0)
 		{
 
 			for(int i = 0; i < 10; i++)
@@ -252,7 +257,7 @@ int main()
 					ardrone.move3D(0, 0.1, 0, 0);
 
 		}
-		//else
+*/		//else
 			//ardrone.move3D(0.3, 0, 0, 0);
 
 		
@@ -297,6 +302,76 @@ void getPoints(Mat prev_frame, Mat curr_frame, vector<Point2f>& prev_points, vec
 
 	lk->calc(d_prev_frame, d_curr_frame, d_prev_points, d_curr_points, GpuMat());
 	download(d_curr_points, curr_points);
+
+}
+
+void getTemplate(Mat prev_frame, Mat curr_frame, vector<Point2f>& prev_points, vector<Point2f>& curr_points, vector<Point2f>& prev_expand, vector<Point2f>& curr_expand)
+{
+
+	Mat sample;
+	curr_frame.copyTo(sample);
+	for (unsigned int i = 0; i < curr_points.size(); i++)
+		circle(sample, curr_points[i], 6, Scalar(20, 25, 200), -1);
+
+	Mat result;
+
+/* Template Matching */
+	for(unsigned int i = 0; i < curr_points.size(); i++)
+	{
+		/* Draw template around previous feature */
+		cv::Rect section1(prev_points[i].x - 15, prev_points[i].y - 15, 30, 30); 
+
+		bool is_inside = (section1 & cv::Rect(0, 0, prev_frame.cols, prev_frame.rows)) == section1;
+		if(!is_inside)
+			continue;
+		Mat PrevTemp = prev_frame(section1);
+
+		double TMmin = 2, Scalemin = 2;
+		for(double scale = 1; scale < 2; scale += 0.1)
+		{
+
+			/* Scale Previous feature */			
+			Mat new_PrevTemp;
+			cv::resize(PrevTemp, new_PrevTemp, cvSize(0, 0), scale, scale);
+
+			/* Draw template around current feature */
+			cv::Rect section2(curr_points[i].x - 15 * scale , curr_points[i].y - 15 * scale,
+									  30 * scale, 30 * scale);
+
+			bool is_inside2 = (section2 & cv::Rect(0, 0, curr_frame.cols, curr_frame.rows)) == section2;
+			if(!is_inside2)
+				continue;
+			Mat CurrTemp = curr_frame(section2);
+
+			matchTemplate(new_PrevTemp, CurrTemp, result, CV_TM_SQDIFF_NORMED);		
+
+	 		double minVal, maxVal, TMscale; 
+			Point minLoc,  maxLoc, matchLoc;
+	 		cv::minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc, Mat());
+			TMscale = minVal/(scale*scale);
+
+			if(TMscale < TMmin)
+			{
+				TMmin = TMscale;
+				Scalemin = scale;
+			}
+	
+		}
+		
+		if(Scalemin > 1.06 && TMmin < 0.8)
+		{
+			prev_expand.push_back( prev_points[i]);
+			curr_expand.push_back( curr_points[i]);
+		}
+	}
+
+//	prev_points.swap(prev_hold);
+//	curr_points.swap(curr_hold);
+	
+	for (unsigned int i = 0; i < curr_expand.size(); i++)
+		circle(sample, curr_expand[i], 6, Scalar(200, 25, 20), -1);
+
+	imshow("Expanding", sample);
 
 }
 
